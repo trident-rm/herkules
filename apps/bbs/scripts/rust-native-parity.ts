@@ -312,18 +312,26 @@ export async function nativeParity(databaseUrl: string, library: Library, db: Bb
     );
     assert.equal(evilOrigin.status, 403);
     checks++;
-    const allowedOrigin = await legacyCall(
-      `${origin}/mcp/bbs`,
-      mcpToken,
-      (input, init) =>
-        fetch(input, {
-          ...init,
-          headers: { ...Object.fromEntries(new Headers(init?.headers)), origin: appOrigin },
-        }),
-      "tools/list",
-    );
-    assert.equal(allowedOrigin.status, 200);
-    checks++;
+    for (const [browserOrigin, status] of [
+      [appOrigin, 200],
+      [`${appOrigin}:443`, 200],
+      [`${appOrigin}:444`, 403],
+      [publicOrigin, 200],
+      [new URL(publicOrigin).origin.replace(/:\d+$/, ":1"), 403],
+    ] as const) {
+      const response = await legacyCall(
+        `${origin}/mcp/bbs`,
+        mcpToken,
+        (input, init) =>
+          fetch(input, {
+            ...init,
+            headers: { ...Object.fromEntries(new Headers(init?.headers)), origin: browserOrigin },
+          }),
+        "tools/list",
+      );
+      assert.equal(response.status, status, `MCP origin ${browserOrigin}`);
+      checks++;
+    }
     const rustClient = await connect(`${origin}/mcp/bbs`, mcpToken, fetch);
     const nodeClient = await connect(mcp, mcpToken, nodeFetch);
     try {
