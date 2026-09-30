@@ -2,7 +2,7 @@
 
 `@herkules/bbs` is the archive and search application at `https://bbs.herkules.dev`. One Hono process serves the API, the MCP endpoint, browser OAuth routes, the built TanStack SPA, and page metadata. It stores the corpus in its own Postgres database. The crawler and Feishu bot run from the same image as separate `work` and `bot` commands.
 
-An incremental Rust + Askama SSR migration is underway; all corpus reads can now run alongside Hono through an opt-in adapter. The production image enables native Rust REST/MCP and browser OAuth/session handling through a supervised loopback service. Node retains remaining SPA pages and workers; complete SSR navigation and writer migration remain pending. See the [migration sequence](MIGRATION.md) and [Rust run/test instructions](rust/README.md). Better Auth remains unchanged.
+An incremental Rust + Askama SSR migration is underway; all corpus reads can now run alongside Hono through an opt-in adapter. The production image enables native Rust REST/MCP and browser OAuth/session handling through a supervised loopback service. The separate `bbs-web` target now serves all web traffic directly from Rust, including Vite-built SPA assets; the existing `bbs` target retains jobs/migrations and hybrid rollback. Production cutover requires the coordinated infrastructure release. Complete SSR navigation and writer migration remain pending. See the [migration sequence](MIGRATION.md) and [Rust run/test instructions](rust/README.md). Better Auth remains unchanged.
 
 The web UI has its own README, owned separately: [`web/README.md`](web/README.md).
 

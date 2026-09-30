@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# Application images: --target auth | bbs | ai | platform.
+# Application images: --target auth | bbs | bbs-web | ai | platform.
 # The build stage installs the whole workspace once; runtime images get only
 # `pnpm deploy --prod` output (auth, bbs, ai) or static assets and routes (platform).
 
@@ -106,6 +106,20 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s -
   CMD wget -qO- http://127.0.0.1:3003/healthz || exit 1
 # ENTRYPOINT, not CMD: `docker compose run --rm bbs import /import/app.db` appends argv (main.ts dispatches).
 ENTRYPOINT ["node", "dist/main.mjs"]
+
+# Rust-only web process. The existing bbs image remains the jobs/migration image
+# and compatible rollback target. Vite/Node are build-time dependencies only.
+FROM alpine:3.23 AS bbs-web
+RUN apk add --no-cache ca-certificates && addgroup -g 1000 bbs && adduser -D -u 1000 -G bbs bbs
+WORKDIR /app
+ENV WEB_DIR=/app/dist/client BBS_RUST_LISTEN=0.0.0.0:3003
+COPY --from=bbs-rust-build /herkules-bbs /usr/local/bin/herkules-bbs
+COPY --from=build --chown=bbs:bbs /app/apps/bbs/dist/client /app/dist/client
+USER bbs
+EXPOSE 3003
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:3003/healthz || exit 1
+ENTRYPOINT ["/usr/local/bin/herkules-bbs"]
 
 # Static platform artifact consumed by herkules-infra; never run as a service.
 FROM scratch AS platform

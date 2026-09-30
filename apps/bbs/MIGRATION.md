@@ -10,7 +10,7 @@ Real-Postgres differential checks also cover native REST/MCP presenters, cookie 
 
 Real-Postgres differential checks cover all read methods, including Unicode snippets, cross-filtered facets, malformed AI arrays, orphaned entities and cursor interchange. Query counts retain the existing one/two-query bounds; representative query-plan review is still pending before cutover.
 
-The existing TypeScript schema, Drizzle migration history and corpus writer remain authoritative. Rust reads the same database and uses independent runtime SQL. Generated migration SQL is unchanged. The BBS container packages the native Rust service and supervises it after Node migrations. Node forwards REST/MCP/OAuth and hard article navigations to Rust while retaining the SPA and workers. Complete Rust UI/writer cutover remains pending.
+The existing TypeScript schema, Drizzle migration history and corpus writer remain authoritative. Rust reads the same database and uses independent runtime SQL. Generated migration SQL is unchanged. The existing `bbs` image retains supervised hybrid serving and jobs for compatibility. A separate `bbs-web` image now makes Rust PID 1 and serves native REST/MCP/OAuth, Askama article documents and all remaining Vite-built SPA documents/assets directly. A coordinated infrastructure preparation job runs Node migrations/rederivation to completion before web startup. Node is no longer needed as a long-running process in the web container; worker, bot and central identity migration remain pending. Complete Askama UI/writer cutover remains pending.
 
 ## Sequence and completion gates
 
