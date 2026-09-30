@@ -88,7 +88,7 @@ BBS_RUST_READ_ORIGIN=http://127.0.0.1:3203
 
 Both services must point at the same Postgres corpus. The entity and entity-head adapter query keys work in both anonymous and native-auth Rust modes; already-normalized keys are preserved exactly, including Unicode lowercase expansions. The `Library` adapter delegates all twelve corpus read methods, including both head metadata methods. Node still owns API validation and presentation, OAuth/session checks, MCP transport and token validation, admission, article-refresh hooks, migrations, crawler and bot. Delegation requires `SEARCH_INDEX=trgm`; both Node configuration and Rust startup reject another search index. It sends no browser cookies or bearer tokens to Rust. Upstream errors fail the request; they do not silently switch back to Node. Remove the variable and restart Node to restore all original reads.
 
-This option does not change browser page routing: open the Rust port directly for the SSR preview. Do not replace the production `/articles/*` routes yet, because navigation and reader interaction parity are incomplete.
+This adapter option does not change browser page routing. The separate `bbs-web` image serves the complete web surface directly; full Askama navigation and richer reader widgets remain later UI increments.
 
 ## Native REST, MCP and browser OAuth
 
