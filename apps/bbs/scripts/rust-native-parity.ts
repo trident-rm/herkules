@@ -240,6 +240,9 @@ export async function nativeParity(databaseUrl: string, library: Library, db: Bb
       const sdk = await connect(mcp, mcpToken, (input, init) => {
         const headers = new Headers(init?.headers);
         headers.set("host", new URL(publicOrigin).host);
+        headers.set("transfer-encoding", "chunked");
+        headers.set("connection", "keep-alive, x-hop-test");
+        headers.set("x-hop-test", "connection-specific");
         return viaProxy(input, { ...init, headers });
       });
       try {

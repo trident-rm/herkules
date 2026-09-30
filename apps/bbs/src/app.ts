@@ -80,6 +80,21 @@ export function createApp(deps: AppDeps) {
         const upstream = new URL(url.pathname + url.search, origin);
         try {
           const request = new Request(upstream, c.req.raw);
+          const connectionHeaders = request.headers.get("connection")?.split(",") ?? [];
+          for (const name of [
+            ...connectionHeaders,
+            "connection",
+            "keep-alive",
+            "proxy-authenticate",
+            "proxy-authorization",
+            "proxy-connection",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade",
+          ]) {
+            request.headers.delete(name.trim());
+          }
           request.headers.set("host", upstream.host);
           // Preserve streaming MCP responses and all Set-Cookie headers; redirects
           // must reach the browser, never be followed by this private proxy.
