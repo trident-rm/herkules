@@ -41,3 +41,14 @@ test("training lessons, widgets and tooling rebuild the platform artifact", () =
   }
   assert.deepEqual(selectImageTargets(["apps/training/README.md"]).targets, []);
 });
+
+test("Rust backend and shared auth changes rebuild the BBS runtime", () => {
+  for (const path of [
+    "Cargo.toml",
+    "Cargo.lock",
+    "apps/bbs/rust/src/http.rs",
+    "packages/auth-rust/src/session.rs",
+  ]) {
+    assert.deepEqual(selectImageTargets([path]).targets, ["bbs"]);
+  }
+});

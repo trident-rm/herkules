@@ -35,6 +35,8 @@ export const configSchema = z.object({
   SEARCH_INDEX: z.enum(["trgm", "pgroonga"]).default("trgm"),
   /** Optional Rust corpus reads; OAuth, transports and writers remain here. */
   BBS_RUST_READ_ORIGIN: z.string().url().optional(),
+  BBS_RUST_NATIVE: z.enum(["true", "false"]).default("false"),
+  BBS_RUST_BINARY: z.string().min(1).default("/usr/local/bin/herkules-bbs"),
   /** `false` skips the boot-time CREATE DATABASE probe (db/index.ts ensureDatabase); run `createdb bbs` once instead. */
   BBS_CREATE_DATABASE: z
     .enum(["true", "false"])
@@ -63,6 +65,8 @@ export interface Config {
   readonly webDir: string | null;
   readonly searchIndex: "trgm" | "pgroonga";
   readonly rustReadOrigin: string | null;
+  readonly rustNative: boolean;
+  readonly rustBinary: string;
   readonly createDatabase: boolean;
   readonly port: number;
   readonly isProduction: boolean;
@@ -74,8 +78,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const appOrigin = new URL(raw.APP_ORIGIN).origin;
   const authInternal = raw.AUTH_INTERNAL_URL ? new URL(raw.AUTH_INTERNAL_URL).origin : origin;
   let rustReadOrigin: string | null = null;
-  if (raw.BBS_RUST_READ_ORIGIN) {
-    const url = new URL(raw.BBS_RUST_READ_ORIGIN);
+  const rustOrigin =
+    raw.BBS_RUST_READ_ORIGIN ??
+    (raw.BBS_RUST_NATIVE === "true" ? "http://127.0.0.1:3203" : undefined);
+  if (rustOrigin) {
+    const url = new URL(rustOrigin);
     if (
       !["http:", "https:"].includes(url.protocol) ||
       url.username ||
@@ -95,6 +102,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     rustReadOrigin = url.origin;
   }
+  if (raw.BBS_RUST_NATIVE === "true" && raw.BBS_CLIENT_SECRET.length < 32)
+    throw new TypeError("Native Rust requires BBS_CLIENT_SECRET of at least 32 characters");
   return Object.freeze({
     origin,
     appOrigin,
@@ -108,6 +117,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDir: raw.WEB_DIR ? resolve(raw.WEB_DIR) : null,
     searchIndex: raw.SEARCH_INDEX,
     rustReadOrigin,
+    rustNative: raw.BBS_RUST_NATIVE === "true",
+    rustBinary: raw.BBS_RUST_BINARY,
     createDatabase: raw.BBS_CREATE_DATABASE,
     port: raw.PORT,
     isProduction: raw.NODE_ENV === "production",

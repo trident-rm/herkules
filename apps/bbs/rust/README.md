@@ -1,6 +1,6 @@
 # BBS Rust service
 
-Incremental BBS migration to Rust, Askama SSR and Vite-built static assets. The existing Hono application remains the deployed application. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
+Incremental BBS migration to Rust, Askama SSR and Vite-built static assets. The BBS image now packages Rust alongside the existing Node browser/worker implementation. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
 
 ## Run
 
@@ -111,7 +111,7 @@ Native mode serves `/api/viewer`, guarded `/api/me`, `/login`, `/callback`, POST
 
 Browser login uses the existing confidential client with PKCE, encrypted multi-attempt state, safe return paths, encrypted session cookies and refresh-token rotation. Cookie format and keys match Node, allowing compatible sessions during a staged switch. Concurrent refreshes share an in-flight request; successful rotations are retained briefly for other tabs. Logout clears both cookies and attempts issuer revocation. User profile lookup stays with the existing identity service. Better Auth remains TypeScript; Rust is its OAuth client and resource server.
 
-Native article reads retain the existing best-effort stale-article refresh request. MCP article reads remain read-only. No migration, crawler, AI worker or bot ownership moves in this increment. The SPA, account destination and complete SSR navigation are not served by Rust yet; native mode is ready for contract testing, not a complete browser or production cutover. Invalid REST parameter responses preserve status/error codes, but some validation descriptions are generic instead of the Node Zod diagnostic text.
+Native article reads retain the existing best-effort stale-article refresh request. MCP article reads remain read-only. No migration, crawler, AI worker or bot ownership moves in this increment. The standalone Rust port does not serve the SPA or account destination. In the BBS image, Node migrates the corpus, starts the native Rust service on loopback and waits for database readiness before listening. Node proxies REST, MCP, OAuth and hard article navigations to Rust, while keeping the remaining SPA pages and assets. It terminates the container if Rust exits; SIGTERM stops both processes. Workers and bot commands start only Node. Set `BBS_RUST_NATIVE=false` and unset `BBS_RUST_READ_ORIGIN` to use the original Node implementation; deployment rollback selects the prior immutable image. Invalid REST parameter responses preserve status/error codes, but some validation descriptions are generic instead of the Node Zod diagnostic text.
 
 MCP metadata is generated from the Node contract; regenerate it from `apps/bbs` after intentional tool contract changes:
 

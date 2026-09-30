@@ -10,7 +10,7 @@ Real-Postgres differential checks also cover native REST/MCP presenters, cookie 
 
 Real-Postgres differential checks cover all read methods, including Unicode snippets, cross-filtered facets, malformed AI arrays, orphaned entities and cursor interchange. Query counts retain the existing one/two-query bounds; representative query-plan review is still pending before cutover.
 
-The existing TypeScript schema, Drizzle migration history and corpus writer remain authoritative. Rust reads the same database and uses independent runtime SQL. Generated migration SQL is unchanged. There is no production container or route cutover in this increment.
+The existing TypeScript schema, Drizzle migration history and corpus writer remain authoritative. Rust reads the same database and uses independent runtime SQL. Generated migration SQL is unchanged. The BBS container packages the native Rust service and supervises it after Node migrations. Node forwards REST/MCP/OAuth and hard article navigations to Rust while retaining the SPA and workers. Complete Rust UI/writer cutover remains pending.
 
 ## Sequence and completion gates
 

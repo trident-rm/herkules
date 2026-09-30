@@ -24,6 +24,12 @@ export function selectImageTargets(paths, { all = false } = {}) {
       ["Dockerfile", ".dockerignore", "tools/images/docker-bake.hcl"].includes(path)
     )
       add(...allTargets);
+    if (
+      ["Cargo.toml", "Cargo.lock"].includes(path) ||
+      path.startsWith("apps/bbs/rust/") ||
+      path.startsWith("packages/auth-rust/")
+    )
+      add("bbs");
     if (nodeBuildInputs.has(path) || path.startsWith("tsconfig")) add(...allTargets);
     if (isBuildInput(path, "services/feishu", ["src"])) add("auth");
     if (isBuildInput(path, "services/auth", ["src", "drizzle"])) add("auth");

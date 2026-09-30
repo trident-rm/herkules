@@ -44,6 +44,8 @@ export interface AppDeps {
   readonly userInfo: UserInfo;
   readonly spa: SpaHandler;
   readonly appOrigin: string;
+  /** Private native service; browser documents still use the SPA fallback. */
+  readonly nativeRustOrigin?: string;
   /** `db.execute(sql\`select 1\`)`; the only thing /healthz can meaningfully check. */
   readonly ping: () => Promise<void>;
   readonly onError?: (error: Error) => void;
@@ -68,6 +70,31 @@ export function createApp(deps: AppDeps) {
   );
 
   const app = new Hono<ViewerEnv>();
+  if (deps.nativeRustOrigin) {
+    const origin = deps.nativeRustOrigin;
+    app.on(
+      ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS", "HEAD"],
+      ["/api/*", "/mcp/bbs", "/mcp/bbs/healthz", "/login", "/callback", "/logout", "/articles/:id"],
+      async (c) => {
+        const url = new URL(c.req.url);
+        const upstream = new URL(url.pathname + url.search, origin);
+        try {
+          const request = new Request(upstream, c.req.raw);
+          request.headers.set("host", upstream.host);
+          // Preserve streaming MCP responses and all Set-Cookie headers; redirects
+          // must reach the browser, never be followed by this private proxy.
+          return await fetch(request, { redirect: "manual" });
+        } catch (error) {
+          deps.onError?.(error instanceof Error ? error : new Error(String(error)));
+          return c.json(
+            { error: "unavailable", error_description: "native BBS unavailable, retry" },
+            503,
+            { "cache-control": "no-store", "retry-after": "5" },
+          );
+        }
+      },
+    );
+  }
   const mcpPath = `/mcp/${RESOURCE_NAME}`;
 
   app.get("/healthz", async (c) => {

@@ -17,6 +17,8 @@
  * `docker compose run --rm bbs work --once` appends arguments: one image, one
  * entrypoint, no `scripts/` directory that exists only in the repo.
  */
+import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { serve } from "@hono/node-server";
 import { apiResource, mcpResource } from "@herkules/auth-middleware";
 import { createOAuthClient } from "@herkules/oauth-client";
@@ -115,6 +117,7 @@ export async function createService(deps: ServiceDeps = {}) {
     userInfo,
     spa,
     appOrigin: config.appOrigin,
+    nativeRustOrigin: config.rustNative ? config.rustReadOrigin! : undefined,
     ping: async () => {
       await db.execute(sql`select 1`);
     },
@@ -140,12 +143,59 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   if (command) process.exit(await command(argv.slice(1)));
   if (name !== undefined) throw new TypeError(`unknown bbs command: ${name}`);
   const service = await createService();
+  let rust: ReturnType<typeof spawn> | undefined;
+  if (service.config.rustNative) {
+    const origin = new URL(service.config.rustReadOrigin!);
+    if (origin.hostname !== "127.0.0.1" || origin.protocol !== "http:") {
+      await service.close();
+      throw new TypeError("Supervised native Rust must listen on an HTTP loopback origin");
+    }
+    rust = spawn(service.config.rustBinary, [], {
+      env: { ...process.env, BBS_RUST_LISTEN: `127.0.0.1:${origin.port || "80"}` },
+      stdio: "inherit",
+    });
+    let startupError: Error | undefined;
+    rust.on("error", (error) => {
+      startupError = error;
+    });
+    try {
+      let ready = false;
+      for (let attempt = 0; attempt < 150; attempt++) {
+        if (startupError) throw startupError;
+        if (rust.exitCode !== null || rust.signalCode !== null)
+          throw new Error("Native Rust exited during startup");
+        try {
+          ready = (await fetch(`${origin.origin}/healthz`, { signal: AbortSignal.timeout(500) }))
+            .ok;
+        } catch {
+          /* retry while starting */
+        }
+        if (ready) break;
+        await delay(100);
+      }
+      if (!ready) throw new Error("Native Rust startup timed out");
+    } catch (error) {
+      rust.kill("SIGTERM");
+      await service.close();
+      throw error;
+    }
+  }
   const server = serve({ fetch: service.app.fetch, port: service.config.port }, (info) => {
     console.log(
       `bbs listening on :${info.port} as ${service.config.appOrigin} (mcp ${service.config.mcpResource})`,
     );
   });
+  let stopping = false;
+  rust?.on("exit", () => {
+    if (!stopping) {
+      console.error("[bbs] native Rust exited; stopping container");
+      process.exit(1);
+    }
+  });
   const shutdown = () => {
+    if (stopping) return;
+    stopping = true;
+    rust?.kill("SIGTERM");
     server.close();
     void service.close().finally(() => process.exit(0));
   };

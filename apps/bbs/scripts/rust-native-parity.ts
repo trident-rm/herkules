@@ -15,7 +15,7 @@ import { createSealer } from "@herkules/oauth-client/testing";
 import { safePath, createCookieJar } from "@herkules/oauth-client/testing";
 import { absorbCookies, createFakeIssuer } from "@herkules/oauth-client/testing";
 import type { Library } from "../src/library/index.ts";
-import { createApp } from "../src/app.ts";
+import { createApp, type AppDeps } from "../src/app.ts";
 import { createSpaHandler } from "../src/spa/static.ts";
 import { connect, fetchVia, legacyCall } from "../tests/helpers.ts";
 import { ID } from "../tests/seed.ts";
@@ -75,7 +75,7 @@ export async function nativeParity(databaseUrl: string, library: Library, db: Bb
     issuerInternal: issuer,
     fetch: outbound,
   });
-  const node = createApp({
+  const appDeps: AppDeps = {
     library,
     oauth: honoOAuth(oauth, {
       onLoginFailure: (f, c) =>
@@ -90,7 +90,8 @@ export async function nativeParity(databaseUrl: string, library: Library, db: Bb
     }),
     appOrigin,
     ping: async () => {},
-  });
+  };
+  const node = createApp(appDeps);
   const child = spawn(resolve(root, "target/debug/herkules-bbs"), [], {
     env: {
       ...process.env,
@@ -217,6 +218,47 @@ export async function nativeParity(databaseUrl: string, library: Library, db: Bb
     }
     const token = await fake.mint({ audience: api, subject: "native-user" });
     const mcpToken = await fake.mint({ audience: mcp, subject: "native-user" });
+    const proxy = createApp({ ...appDeps, nativeRustOrigin: origin });
+    try {
+      const response = await proxy.app.request("/api/articles?limit=2");
+      assert.deepEqual(
+        await response.json(),
+        await (await rustRequest("/api/articles?limit=2")).json(),
+      );
+      checks++;
+      assert.equal((await proxy.app.request("/")).status, 200, "Node still serves the feed SPA");
+      checks++;
+      const reader = await proxy.app.request(`/articles/${ID.A}`);
+      assert.ok((await reader.text()).includes("ssr-reader"), "hard navigations use Askama reader");
+      checks++;
+      const signed = await fake.signIn(proxy.app, { subject: "native-user", next: "/account" });
+      const viewer = await proxy.app.request("/api/me", { headers: { cookie: signed.cookie } });
+      assert.equal(viewer.status, 200, "OAuth cookies survive the native proxy");
+      assert.equal(((await viewer.json()) as { id: string }).id, "native-user");
+      checks++;
+      const viaProxy = fetchVia(proxy.app);
+      const sdk = await connect(mcp, mcpToken, (input, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("host", new URL(publicOrigin).host);
+        return viaProxy(input, { ...init, headers });
+      });
+      try {
+        assert.equal((await sdk.listTools()).tools.length, 10);
+        checks++;
+      } finally {
+        await sdk.close();
+      }
+      assert.equal(
+        (
+          await proxy.app.request("/logout", { method: "POST", headers: { cookie: signed.cookie } })
+        ).headers.getSetCookie().length,
+        2,
+      );
+      checks++;
+    } finally {
+      await proxy.close();
+    }
+
     for (const path of ["/api/me", "/api/viewer", "/api/articles?limit=1"]) {
       for (const authorization of [
         undefined,
