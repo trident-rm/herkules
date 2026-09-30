@@ -1,3 +1,5 @@
+import { Table, TableBody, TableRow, TableCell } from "@herkules/ui/components/table";
+import { Disclosure } from "../shell/Disclosure.tsx";
 import { Badge } from "@herkules/ui/components/badge";
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
@@ -64,23 +66,26 @@ export function KbPanelBody({ kb }: { kb: KbEntry }) {
       )}
       {kb.parameters.length > 0 && (
         <Section title="参数" count={kb.parameters.length} open>
-          <table className="w-full border-collapse text-[13px] [&_td]:border-b [&_td]:border-line-2 [&_td]:py-[5px] [&_td]:pr-1.5 [&_td]:text-left [&_td]:align-top [&_tr:last-child_td]:border-b-0">
-            <tbody>
+          <Table
+            aria-label="文章参数"
+            className="min-w-[420px] border-collapse text-[13px] [&_td]:border-b [&_td]:border-line-2 [&_td]:py-[5px] [&_td]:pr-1.5 [&_td]:text-left [&_td]:align-top [&_tr:last-child_td]:border-b-0"
+          >
+            <TableBody>
               {kb.parameters.map((p, index) => (
-                <tr key={index}>
-                  <td>{p.name}</td>
-                  <td className="pr-3! text-right font-mono whitespace-nowrap tabular-nums">
+                <TableRow key={index}>
+                  <TableCell className="whitespace-nowrap">{p.name}</TableCell>
+                  <TableCell className="pr-3! text-right font-mono whitespace-nowrap tabular-nums">
                     {p.value}
                     {p.unit ? ` ${p.unit}` : ""}
-                  </td>
-                  <td className="text-[12.5px] text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="min-w-[160px] text-[12.5px] whitespace-normal text-muted-foreground">
                     {p.context}
                     {p.source && <span className="tag ml-1.5">{p.source}</span>}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </Section>
       )}
       {kb.components.length > 0 && (
@@ -181,7 +186,7 @@ export function KbPanelBody({ kb }: { kb: KbEntry }) {
   );
 }
 
-/** `<details>` rather than a state hook: the browser already owns this toggle. */
+/** Independently collapsible sections keep parameters and pitfalls open initially. */
 function Section({
   title,
   count,
@@ -194,14 +199,17 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <details className={`group ${SEC} [&>*:not(summary)]:mt-2`} open={open}>
-      <summary className="flex cursor-pointer list-none items-center gap-2 font-semibold text-ink select-none before:ml-0.5 before:size-1.5 before:-rotate-45 before:border-r-[1.5px] before:border-b-[1.5px] before:border-muted-foreground before:transition-transform before:content-[''] group-open:before:rotate-45 motion-reduce:before:transition-none [&::-webkit-details-marker]:hidden">
-        {title}
-        {count !== undefined && (
-          <span className="font-mono text-[11px] font-normal text-muted-foreground">{count}</span>
-        )}
-      </summary>
+    <Disclosure
+      className={SEC}
+      defaultOpen={open}
+      title={
+        <>
+          {title}
+          {count !== undefined && <span className={FINE}>{count}</span>}
+        </>
+      }
+    >
       {children}
-    </details>
+    </Disclosure>
   );
 }

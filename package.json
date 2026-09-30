@@ -5,7 +5,7 @@
   "license": "MIT OR Apache-2.0",
   "type": "module",
   "scripts": {
-    "ready": "vp run -r build && vp check && vp run -r test && vp run test:images",
+    "ready": "vp run -r build && vp check && vp run -r test && vp run test:images && vp run check:rust && vp run test:rust",
     "test:images": "node --test tools/images/*.test.mjs",
     "prepare": "vp config"
   },

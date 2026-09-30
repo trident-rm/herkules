@@ -2,6 +2,8 @@
 
 `@herkules/bbs` is the archive and search application at `https://bbs.herkules.dev`. One Hono process serves the API, the MCP endpoint, browser OAuth routes, the built TanStack SPA, and page metadata. It stores the corpus in its own Postgres database. The crawler and Feishu bot run from the same image as separate `work` and `bot` commands.
 
+An incremental Rust + Askama SSR migration is underway; the first article-read slice runs alongside Hono. See the [migration sequence](MIGRATION.md) and [Rust run/test instructions](rust/README.md). Better Auth remains unchanged.
+
 The web UI has its own README, owned separately: [`web/README.md`](web/README.md).
 
 ## Run and test

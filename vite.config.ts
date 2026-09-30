@@ -22,6 +22,12 @@ export default defineConfig({
   run: {
     cache: true,
     tasks: {
+      "check:rust": {
+        command:
+          "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
+        cache: false,
+      },
+      "test:rust": { command: "cargo test --workspace --locked", cache: false },
       // The whole local stack without Docker, five processes at once:
       //   :3000  services/web   the PUBLIC origin; its Vite server proxies /auth and /.well-known
       //                         to :3001 and /mcp/bbs to bbs

@@ -11,6 +11,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import type { FormEvent } from "react";
 
 import type { KbBrowseDTO } from "../../../src/api/dto.ts";
+import { Disclosure } from "../shell/Disclosure.tsx";
 import { kbRoute } from "../routes.tsx";
 import { usePageTitle } from "../shell/usePageTitle.ts";
 import type { KbSearch } from "../url.ts";
@@ -141,10 +142,13 @@ export function KbPage() {
             </section>
           )}
           {rest.length > 0 && (
-            <details>
-              <summary className="mb-2.5 cursor-pointer font-mono text-xs text-muted-foreground">
-                全部条目<small className="ml-[5px] text-[11px]">{tallies.length}</small>
-              </summary>
+            <Disclosure
+              title={
+                <>
+                  全部条目<small className="ml-[5px] text-[11px]">{tallies.length}</small>
+                </>
+              }
+            >
               <div className="flex flex-wrap gap-1.5">
                 {rest.map((e) => (
                   <Badge variant="outline" className={CHIP} key={e.name} asChild>
@@ -154,7 +158,7 @@ export function KbPage() {
                   </Badge>
                 ))}
               </div>
-            </details>
+            </Disclosure>
           )}
         </aside>
 

@@ -383,7 +383,9 @@ export function fakeLibrary(): Library & { readonly calls: string[] } {
 
 /** The whole HTTP app over fakeLibrary() and the fake issuer: what the API and MCP contract tests exercise. */
 export async function createFakeApp(
-  options?: Partial<Pick<AppDeps, "onArticleRead" | "onError" | "ping">>,
+  options?: Partial<Pick<AppDeps, "onArticleRead" | "onError" | "ping">> & {
+    decorateLibrary?: (local: Library) => Library;
+  },
 ) {
   const fake = await createFakeIssuer({
     issuer: ISSUER,
@@ -391,6 +393,7 @@ export async function createFakeApp(
     resource: API_RESOURCE,
   });
   const library = fakeLibrary();
+  const reads = options?.decorateLibrary?.(library) ?? library;
   const api = apiResource({ resource: API_RESOURCE, issuer: ISSUER, fetch: fake.fetch });
   const mcp = mcpResource({ resource: MCP_RESOURCE, issuer: ISSUER, fetch: fake.fetch });
   const oauth = honoOAuth(
@@ -403,11 +406,11 @@ export async function createFakeApp(
     }),
   );
   const built = createApp({
-    library,
+    library: reads,
     oauth,
     mcp,
     userInfo: createUserInfo({ baseUrl: ORIGIN, fetch: fake.fetch }),
-    spa: await createSpaHandler({ webDir: null, library, appOrigin: APP_ORIGIN }),
+    spa: await createSpaHandler({ webDir: null, library: reads, appOrigin: APP_ORIGIN }),
     appOrigin: APP_ORIGIN,
     ping: options?.ping ?? (async () => {}),
     onArticleRead: options?.onArticleRead,

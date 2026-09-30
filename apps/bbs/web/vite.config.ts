@@ -22,10 +22,15 @@ export default defineConfig({
     ),
   },
   build: {
+    manifest: true,
     outDir: "../dist/client",
     emptyOutDir: true,
     sourcemap: false,
     rolldownOptions: {
+      input: {
+        app: `${import.meta.dirname}/index.html`,
+        ssr: `${import.meta.dirname}/src/ssr.css`,
+      },
       output: {
         codeSplitting: {
           groups: [

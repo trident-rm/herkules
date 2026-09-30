@@ -33,6 +33,7 @@ import { createDb, ensureDatabase, migrate } from "./db/index.ts";
 import { selectSearchIndex } from "./db/search/index.ts";
 import { runImportCli } from "./import/cli.ts";
 import { createLibrary } from "./library/index.ts";
+import { withRustReads } from "./library/rust.ts";
 import { createSpaHandler } from "./spa/static.ts";
 import { createUserInfo } from "@herkules/auth-middleware/userinfo";
 
@@ -67,7 +68,10 @@ export async function createService(deps: ServiceDeps = {}) {
   await rederive(db, { now, log: (l) => console.log("[bbs]", l) }); // one SELECT when corpus_versions matches
 
   const search = selectSearchIndex(config.searchIndex, async (q) => db.execute(q));
-  const library = createLibrary({ db, search });
+  const localLibrary = createLibrary({ db, search });
+  const library = config.rustReadOrigin
+    ? withRustReads(localLibrary, { origin: config.rustReadOrigin, fetch: deps.fetch })
+    : localLibrary;
 
   const jwksUrl = `${config.authInternal}/auth/jwks`;
   const api = apiResource({

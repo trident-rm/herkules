@@ -8,18 +8,18 @@ infrastructure repository.
 
 ## Repository map
 
-| Workspace                                                        | Purpose                                                                            |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| [`services/auth`](services/auth/README.md)                       | Better Auth authorization server, resource registry, users, roles, gate, and audit |
-| [`services/feishu`](services/feishu/README.md)                   | Hosted Feishu MCP with separate authorization for each member                      |
-| [`services/web`](services/web/README.md)                         | Platform login, consent, settings, admin, and developer-token SPA                  |
-| [`services/inference`](services/inference/README.md)             | AI portal gateway, worker scheduling, membership enforcement and streaming adapter |
-| [`apps/training`](apps/training/README.md)                       | Interactive course site and browser labs                                           |
-| [`apps/bbs`](apps/bbs/README.md)                                 | RM 文库 API, MCP server, SPA host, corpus, search, and crawler                     |
-| [`packages/auth-middleware`](packages/auth-middleware/README.md) | Resource-server JWT verification and OAuth challenge helpers                       |
-| [`packages/oauth-client`](packages/oauth-client/README.md)       | Stateless first-party browser OAuth sessions for Hono apps                         |
-| [`packages/ui`](packages/ui/README.md)                           | Shared source CSS and React components                                             |
-| [`tools/images`](tools/images/README.md)                         | Application images and Caddy route fragments                                       |
+| Workspace                                                        | Purpose                                                                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [`services/auth`](services/auth/README.md)                       | Better Auth authorization server, resource registry, users, roles, gate, and audit         |
+| [`services/feishu`](services/feishu/README.md)                   | Hosted Feishu MCP with separate authorization for each member                              |
+| [`services/web`](services/web/README.md)                         | Platform login, consent, settings, admin, and developer-token SPA                          |
+| [`services/inference`](services/inference/README.md)             | AI portal gateway, worker scheduling, membership enforcement and streaming adapter         |
+| [`apps/training`](apps/training/README.md)                       | Interactive course site and browser labs                                                   |
+| [`apps/bbs`](apps/bbs/README.md)                                 | RM 文库 API, MCP server, SPA host, corpus, search, crawler; incremental Rust/SSR migration |
+| [`packages/auth-middleware`](packages/auth-middleware/README.md) | Resource-server JWT verification and OAuth challenge helpers                               |
+| [`packages/oauth-client`](packages/oauth-client/README.md)       | Stateless first-party browser OAuth sessions for Hono apps                                 |
+| [`packages/ui`](packages/ui/README.md)                           | Shared source CSS and React components                                                     |
+| [`tools/images`](tools/images/README.md)                         | Application images and Caddy route fragments                                               |
 
 Cross-cutting contracts — identity flows, the resource-server token contract, the deploy runbook pointer, and UI decision records — are indexed in [`docs/README.md`](docs/README.md).
 

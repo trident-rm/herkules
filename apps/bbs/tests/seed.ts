@@ -286,8 +286,8 @@ export interface SeededLibrary {
   close(): Promise<void>;
 }
 
-export async function seedLibrary(): Promise<SeededLibrary> {
-  const db = await createDb("pglite://memory");
+export async function seedLibrary(databaseUrl = "pglite://memory"): Promise<SeededLibrary> {
+  const db = await createDb(databaseUrl);
   await migrate(db);
   const now = day(11);
   await db.insert(sources).values({

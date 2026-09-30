@@ -16,6 +16,15 @@ export default defineConfig({
     clean: false,
     external: [/^drizzle-orm/, "postgres", /^@electric-sql\/pglite/, "node:sqlite"],
   },
+  run: {
+    tasks: {
+      "test:rust:parity": {
+        command:
+          "vp -C web build && cargo build -p herkules-bbs --locked && node --experimental-strip-types scripts/rust-parity.ts",
+        cache: false,
+      },
+    },
+  },
   test: {
     include: ["tests/**/*.test.ts", "web/tests/**/*.test.ts"],
     testTimeout: 20_000,

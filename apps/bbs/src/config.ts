@@ -33,6 +33,8 @@ export const configSchema = z.object({
   WEB_DIR: z.string().min(1).optional(),
   /** The search seam (db/search). `pgroonga` is the FRAME check-5 fallback and needs the custom image. */
   SEARCH_INDEX: z.enum(["trgm", "pgroonga"]).default("trgm"),
+  /** Optional Rust article/content/tag reads; OAuth and the other queries remain here. */
+  BBS_RUST_READ_ORIGIN: z.string().url().optional(),
   /** `false` skips the boot-time CREATE DATABASE probe (db/index.ts ensureDatabase); run `createdb bbs` once instead. */
   BBS_CREATE_DATABASE: z
     .enum(["true", "false"])
@@ -60,6 +62,7 @@ export interface Config {
   /** Absolute path, or null when static serving is off (dev). */
   readonly webDir: string | null;
   readonly searchIndex: "trgm" | "pgroonga";
+  readonly rustReadOrigin: string | null;
   readonly createDatabase: boolean;
   readonly port: number;
   readonly isProduction: boolean;
@@ -70,6 +73,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const origin = new URL(raw.PUBLIC_ORIGIN).origin;
   const appOrigin = new URL(raw.APP_ORIGIN).origin;
   const authInternal = raw.AUTH_INTERNAL_URL ? new URL(raw.AUTH_INTERNAL_URL).origin : origin;
+  let rustReadOrigin: string | null = null;
+  if (raw.BBS_RUST_READ_ORIGIN) {
+    const url = new URL(raw.BBS_RUST_READ_ORIGIN);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    )
+      throw new TypeError(
+        "BBS_RUST_READ_ORIGIN must be an HTTP(S) origin without credentials or a path",
+      );
+    if (!/^postgres(ql)?:\/\//.test(raw.DATABASE_URL)) {
+      throw new TypeError("BBS_RUST_READ_ORIGIN requires the shared Postgres corpus, not PGlite");
+    }
+    rustReadOrigin = url.origin;
+  }
   return Object.freeze({
     origin,
     appOrigin,
@@ -82,6 +104,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cookieSecret: raw.BBS_COOKIE_SECRET,
     webDir: raw.WEB_DIR ? resolve(raw.WEB_DIR) : null,
     searchIndex: raw.SEARCH_INDEX,
+    rustReadOrigin,
     createDatabase: raw.BBS_CREATE_DATABASE,
     port: raw.PORT,
     isProduction: raw.NODE_ENV === "production",
