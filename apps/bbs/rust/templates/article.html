@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ article.title }} · RM 文库</title>
+    <meta name="description" content="{{ description }}" />
+    <link rel="canonical" href="{{ canonical }}" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="{{ article.title }} · RM 文库" />
+    <meta property="og:description" content="{{ description }}" />
+    <meta property="og:url" content="{{ canonical }}" />
+    <meta property="og:site_name" content="RM 文库" />
+    {% if let Some(image) = image %}
+    <meta property="og:image" content="{{ image }}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    {% else %}
+    <meta name="twitter:card" content="summary" />
+    {% endif %} {% if let Some(date) = article.published_at %}
+    <meta property="article:published_time" content="{{ date }}" />
+    {% endif %} {% if let Some(author) = article.author %}
+    <meta property="article:author" content="{{ author }}" />
+    {% endif %} {% if let Some(stylesheet) = stylesheet %}
+    <link rel="stylesheet" href="{{ stylesheet }}" />
+    {% endif %}
+  </head>
+  <body class="ssr-reader">
+    <a class="ssr-skip" href="#article-content">跳到正文</a>
+    <header class="ssr-header"><a href="/">RM 文库</a><span>RoboMaster 技术文章</span></header>
+    <main class="ssr-reader-layout">
+      <article>
+        <header class="ssr-article-header">
+          <p class="ssr-meta">
+            {% if let Some(author) = article.author %}<span>{{ author }}</span>{% endif %} {% if let
+            Some(date) = article.published_at %}<time datetime="{{ date }}">{{ date }}</time>{%
+            endif %}
+          </p>
+          <h1>{{ article.title }}</h1>
+          <ul class="ssr-tags" aria-label="文章标签">
+            {% for tag in article.tags %}
+            <li>{{ tag }}</li>
+            {% endfor %}
+          </ul>
+          {% if let Some(introduction) = article.introduction %}
+          <p class="ssr-introduction">{{ introduction }}</p>
+          {% endif %} {% if let Some(url) = source_url %}<a
+            href="{{ url }}"
+            rel="noopener noreferrer"
+            >查看论坛原文 ↗</a
+          >{% endif %}
+        </header>
+        <section id="article-content" class="prose" aria-label="文章正文" tabindex="-1">
+          {# Only content_html is unescaped: the corpus writer sanitizes it. Other fields stay
+          escaped. #} {% if let Some(html) = body_html %}{{ html|safe }} {% else if let Some(text) =
+          article.body_text %}
+          <pre class="ssr-body-text">{{ text }}</pre>
+          {% else %}
+          <p>这篇文章暂无正文。</p>
+          {% endif %}
+        </section>
+      </article>
+      <aside class="ssr-sidebar" aria-label="文章辅助">
+        {% if headings.len() >= 2 %}
+        <section id="reader-side-toc">
+          <h2>目录</h2>
+          <nav class="ssr-toc" aria-label="目录">
+            {% for heading in headings %}
+            <a href="#{{ heading.id }}" data-level="{{ heading.level }}">{{ heading.text }}</a>
+            {% endfor %}
+          </nav>
+        </section>
+        {% endif %}
+        <section id="reader-side-ai">
+          <h2>AI 概览</h2>
+          <div class="ssr-panel">
+            {% if let Some(message) = ai_message %}
+            <p>{{ message }}</p>
+            {% endif %} {% for panel in ai_panels %}
+            <div class="ssr-panel-section">
+              <h3>{{ panel.title }}</h3>
+              {% for row in panel.rows %}
+              <p>{{ row.text }}</p>
+              {% endfor %}
+            </div>
+            {% endfor %} {% if !ai_panels.is_empty() %}
+            <p class="ssr-fine">
+              由 {% if let Some(model) = model %}{{ model }}{% else %}AI{% endif %}
+              生成，可能有误，请以原文为准。
+            </p>
+            {% endif %}
+          </div>
+        </section>
+        {% if !kb_panels.is_empty() %}
+        <section id="reader-side-kb">
+          <h2>规格</h2>
+          <p class="ssr-fine">AI 提取，标注来源。</p>
+          {% for panel in kb_panels %}
+          <details class="ssr-spec">
+            <summary>{{ panel.title }}</summary>
+            {% for row in panel.rows %}
+            <p>
+              {% if let Some(url) = row.href %}<a
+                href="{{ url }}"
+                rel="noopener noreferrer nofollow"
+                >{{ row.text }}</a
+              >{% else %}{{ row.text }}{% endif %}
+            </p>
+            {% endfor %}
+          </details>
+          {% endfor %}
+        </section>
+        {% endif %} {% if !resources.is_empty() || !pictures.is_empty() %}
+        <section id="reader-side-resources">
+          <h2>资源</h2>
+          {% for resource in resources %}
+          <div class="ssr-resource">
+            <span>{{ resource.kind }}</span
+            ><a href="{{ resource.href }}" rel="noopener noreferrer nofollow"
+              >{{ resource.label }}</a
+            >
+          </div>
+          {% endfor %} {% if !pictures.is_empty() %}
+          <h3>原文图片 {{ pictures.len() }}</h3>
+          <ol class="ssr-pictures">
+            {% for picture in pictures %}
+            <li>
+              <a href="{{ picture.href }}" target="_blank" rel="noopener noreferrer"
+                >{{ picture.label }}</a
+              >
+            </li>
+            {% endfor %}
+          </ol>
+          {% endif %}
+        </section>
+        {% endif %}
+      </aside>
+    </main>
+    <nav class="ssr-dock" aria-label="文章辅助">
+      {% if headings.len() >= 2 %}<a href="#reader-side-toc">目录</a>{% endif %}
+      <a href="#reader-side-ai">AI 概览</a>
+      {% if !kb_panels.is_empty() %}<a href="#reader-side-kb">规格</a>{% endif %} {% if
+      !resources.is_empty() || !pictures.is_empty() %}<a href="#reader-side-resources">资源</a>{%
+      endif %}
+    </nav>
+    <footer class="ssr-footer">内容来自 RoboMaster 论坛，著作权归原作者所有。</footer>
+  </body>
+</html>

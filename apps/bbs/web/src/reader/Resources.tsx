@@ -1,3 +1,4 @@
+import { Button } from "@herkules/ui/components/button";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
@@ -80,13 +81,14 @@ export function Resources({
         </div>
       )}
       {hidden > 0 && (
-        <button
-          className="cursor-pointer pt-2.5 text-left text-[13px] text-muted-foreground hover:text-accent"
+        <Button
+          variant="link"
+          className="h-auto justify-start self-start px-0 pt-2.5 text-[13px] text-muted-foreground hover:text-accent"
           type="button"
           onClick={() => setExpanded(true)}
         >
           还有 {hidden} 个链接
-        </button>
+        </Button>
       )}
       {images.length > 0 && (
         <div className="mt-3 flex flex-col gap-1.5">

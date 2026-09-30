@@ -1,3 +1,4 @@
+import { Button } from "@herkules/ui/components/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@herkules/ui/components/sheet";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -81,15 +82,16 @@ export function ReaderSidebar({ sections }: { sections: readonly SidebarSection[
         aria-label="文章辅助"
       >
         {sections.map((section) => (
-          <button
+          <Button
+            variant="ghost"
             key={section.id}
             type="button"
-            className="h-[50px] flex-1 cursor-pointer text-sm aria-pressed:bg-paper/20 [&+button]:border-l [&+button]:border-paper/25"
+            className="h-[50px] flex-1 rounded-none text-paper hover:bg-paper/10 hover:text-paper dark:hover:bg-paper/10 aria-pressed:bg-paper/20 [&+button]:border-l [&+button]:border-paper/25"
             aria-pressed={open === section.id}
             onClick={() => setOpen(open === section.id ? null : section.id)}
           >
             {section.label}
-          </button>
+          </Button>
         ))}
       </div>
     </>

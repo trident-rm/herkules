@@ -1,3 +1,4 @@
+import { Card } from "@herkules/ui/components/card";
 /**
  * The status numbers, with no router and no query — its own module so a test can
  * render it from a fixture DTO without pulling `routes.tsx` (and with it every
@@ -28,7 +29,7 @@ export function StatusTiles({ status }: { status: LibraryStatusDTO }) {
   const { articles, ai, crawler } = status;
   return (
     <div className="my-5 mb-4 grid grid-cols-1 gap-3 md:grid-cols-3" aria-label="进度概览">
-      <section className={TILE}>
+      <Card className={`${TILE} shadow-none`}>
         <span className="eyebrow">文库</span>
         <span className={BIG}>
           {articles.fetched}
@@ -39,8 +40,8 @@ export function StatusTiles({ status }: { status: LibraryStatusDTO }) {
           <br />
           标签 {articles.tags} · 图 {articles.images} · 链接 {articles.links}
         </span>
-      </section>
-      <section className={TILE}>
+      </Card>
+      <Card className={`${TILE} shadow-none`}>
         <span className="eyebrow">AI 概览</span>
         <span className={BIG}>
           {ai.ready}
@@ -51,8 +52,8 @@ export function StatusTiles({ status }: { status: LibraryStatusDTO }) {
           <br />
           知识库条目 {ai.entities}
         </span>
-      </section>
-      <section className={TILE}>
+      </Card>
+      <Card className={`${TILE} shadow-none`}>
         <span className="eyebrow">抓取</span>
         <span className={BIG}>
           {formatDate(crawler.lastCheckedAt)}
@@ -66,7 +67,7 @@ export function StatusTiles({ status }: { status: LibraryStatusDTO }) {
           <br />
           抓取仍在原服务器上运行
         </span>
-      </section>
+      </Card>
     </div>
   );
 }

@@ -23,6 +23,17 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 FROM calciumion/new-api:v1.0.0-rc.37@sha256:8b6cf781e479e6dfcaa5f1ddd86f0e20f12352980029d0d0dfb35cf8cbd1792b AS new-api
 COPY --from=ai-backend /new-api /new-api
 
+# Build a static musl binary; Node remains for SPA delivery and corpus workers.
+FROM rust:1-alpine AS bbs-rust-build
+RUN apk add --no-cache build-base cmake perl
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY apps/bbs/rust apps/bbs/rust
+COPY packages/auth-rust packages/auth-rust
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/build/target \
+    cargo build --release -p herkules-bbs --locked && cp target/release/herkules-bbs /herkules-bbs
+
 FROM node:24-alpine AS base
 RUN npm install -g pnpm@11.24.0
 WORKDIR /app
@@ -84,8 +95,12 @@ USER node
 
 # ── bbs (API + MCP + SPA; `files` carries dist/ and drizzle/) ───────────────
 FROM runtime AS bbs
-ENV PORT=3003 MIGRATIONS_DIR=/app/drizzle WEB_DIR=/app/dist/client
+ENV PORT=3003 MIGRATIONS_DIR=/app/drizzle WEB_DIR=/app/dist/client BBS_RUST_NATIVE=true
 COPY --from=build --chown=node:node /out/bbs /app
+COPY --from=bbs-rust-build /herkules-bbs /usr/local/bin/herkules-bbs
+USER root
+RUN apk add --no-cache ca-certificates
+USER node
 EXPOSE 3003
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3003/healthz || exit 1

@@ -1,0 +1,218 @@
+@import "@herkules/ui/theme.css";
+@import "./reader/reader.css";
+
+.ssr-reader {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+}
+.ssr-reader main,
+.ssr-header,
+.ssr-footer {
+  width: min(100% - 3rem, 52rem);
+  margin-inline: auto;
+}
+.ssr-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+.ssr-reader main {
+  padding-block: 2.5rem;
+}
+.ssr-article-header {
+  padding-bottom: 2rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--line);
+}
+.ssr-reader h1 {
+  font-size: clamp(1.6rem, 4vw, 2.5rem);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.ssr-meta,
+.ssr-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.ssr-tags {
+  list-style: none;
+  padding: 0;
+  margin-block: 1rem;
+}
+.ssr-tags li {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.ssr-introduction {
+  margin-block: 1.5rem;
+  color: var(--ink-2);
+  line-height: 1.8;
+}
+.ssr-reader a {
+  color: var(--accent);
+}
+.ssr-body-text {
+  white-space: pre-wrap;
+}
+.ssr-footer {
+  padding-block: 2rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+.ssr-skip {
+  position: absolute;
+  left: 1rem;
+  top: -5rem;
+  padding: 0.6rem;
+  background: var(--surface);
+}
+.ssr-skip:focus {
+  top: 0.5rem;
+}
+
+.ssr-reader main.ssr-reader-layout {
+  width: min(100% - 3rem, 1240px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+  gap: 3.5rem;
+}
+.ssr-reader-layout > article {
+  min-width: 0;
+}
+.ssr-sidebar {
+  position: sticky;
+  top: 1.5rem;
+  max-height: calc(100dvh - 3rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-inline-end: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.ssr-sidebar section {
+  scroll-margin-top: 1.5rem;
+}
+.ssr-sidebar h2 {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0 0 0.625rem;
+}
+.ssr-sidebar h3 {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin: 0.8rem 0 0.25rem;
+}
+.ssr-sidebar p {
+  margin: 0 0 0.5rem;
+}
+.ssr-toc {
+  display: flex;
+  flex-direction: column;
+  max-height: 38vh;
+  overflow-y: auto;
+}
+.ssr-toc a {
+  padding: 0.25rem 0.75rem;
+  border-left: 2px solid var(--line);
+  color: var(--ink-2);
+}
+.ssr-toc a[data-level="3"] {
+  padding-left: 1.5rem;
+  font-size: 0.8125rem;
+}
+.ssr-panel {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.ssr-panel-section + .ssr-panel-section {
+  margin-top: 0.75rem;
+}
+.ssr-fine {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.ssr-spec {
+  border-top: 1px solid var(--line-2);
+  padding-block: 0.5rem;
+}
+.ssr-spec summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.ssr-spec p {
+  margin-top: 0.5rem;
+}
+.ssr-resource {
+  display: flex;
+  align-items: start;
+  gap: 0.6rem;
+  padding-block: 0.625rem;
+  border-top: 1px solid var(--line-2);
+}
+.ssr-resource span {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding-inline: 0.3rem;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+.ssr-resource a {
+  min-width: 0;
+}
+.ssr-pictures {
+  padding-left: 1.25rem;
+}
+.ssr-dock {
+  display: none;
+}
+@media (max-width: 1023px) {
+  .ssr-reader main.ssr-reader-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+  .ssr-sidebar {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .ssr-dock {
+    position: fixed;
+    inset: auto 0.75rem 1rem;
+    display: flex;
+    z-index: 10;
+    border-radius: var(--radius);
+    background: var(--ink);
+  }
+  .ssr-dock a {
+    flex: 1;
+    padding: 0.875rem 0.25rem;
+    text-align: center;
+    color: var(--paper);
+    font-size: 0.875rem;
+  }
+  .ssr-dock a + a {
+    border-left: 1px solid var(--muted);
+  }
+  .ssr-footer {
+    padding-bottom: 6rem;
+  }
+}

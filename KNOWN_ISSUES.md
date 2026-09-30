@@ -670,6 +670,10 @@ that these files still live in the application checkout.
 
 ## Smaller, worth batching
 
+- `apps/bbs/rust/src/http.rs` — native REST validation preserves status/error codes,
+  but some malformed parameter descriptions are generic instead of the Node Zod
+  diagnostic text. Align these descriptions before claiming exact error-body parity.
+
 - `apps/bbs/web/src/feed/LoadMore.tsx:25` — a failed page re-arms the
   `IntersectionObserver` while the sentinel is still in view, so a persistent API failure
   becomes an unbounded request storm (2 requests per cycle with `retry: 1`), and the

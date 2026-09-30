@@ -508,3 +508,5 @@ export async function createTestService(options: TestServiceOptions = {}): Promi
   };
   return self;
 }
+
+export { RESOURCE_SPECS } from "./registry.ts";

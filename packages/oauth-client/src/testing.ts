@@ -300,3 +300,7 @@ export async function createFakeIssuer(options: FakeIssuerOptions): Promise<Fake
   };
   return self;
 }
+
+// Cookie fixtures for cross-language session interoperability tests.
+export { createCookieJar, safePath } from "./cookie.ts";
+export { createSealer } from "./seal.ts";

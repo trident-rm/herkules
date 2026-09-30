@@ -2,6 +2,8 @@
 
 `apps/bbs/web` is the read-only React SPA at `https://bbs.herkules.dev`: feed, ranked search, reader, knowledge base, tags, status and account. It is a static build — `vp -C web build` emits `apps/bbs/dist/client`, and the Hono container serves those files with per-route head injection (`../src/spa/static.ts`, `../src/spa/head.ts`). There is no build-time API base URL: the browser's origin is the app origin.
 
+The [Rust migration](../MIGRATION.md) adds an Askama article reader with a server-rendered sidebar. Richer controls will reuse the React/shadcn widgets from `packages/ui`, mounted into designated roots alongside the Rust-rendered content. This Vite build now also emits `src/ssr.css` and `.vite/manifest.json` for that reader, sharing the existing theme and article CSS. The SPA remains the deployed UI until SSR navigation and interactions are complete.
+
 The SPA build is separate from the package's `vp pack`. Two Vite configs, two tsconfigs, no shared `root`.
 
 ## Run and test
@@ -29,6 +31,24 @@ In development the Vite server on :3003 **is** bbs's origin; it proxies `/api`, 
 - The reader runs regex passes over the server's already-sanitised HTML (`src/reader/prose.ts`) rather than shipping a DOM parser. The passes only insert `id`, `alt` and local `href` values, all escaped.
 - The MCP guide's URL is the build-time `__PUBLIC_ORIGIN__` define, not an API round trip: it changes with the deployment, not the session.
 - `/api/kb/entities` has no SPA consumer — it serves the MCP `list_entities` tool — and `/api/me` is never called, because `q.viewer()` answers the same question without a 401.
+
+## Component system
+
+The React frontend uses the shared shadcn/ui (Radix, `new-york`) components in
+`packages/ui`. Search, feed category/scope controls, keyword clearing and resource
+expansion use `Button`/`Input`; URL filters compose `Button asChild` with router
+links, preserving navigation, preload and history. Badges keep facet/count links.
+The reader uses `Sheet` and `Dialog`, `Card` for AI states, `Table` for parameters,
+and a small `shell/Disclosure` composition over `Accordion` for FAQ, specifications
+and the KB entity list. Parameters and pitfalls start open; other disclosures
+start closed. Wide parameter tables scroll inside their panel. Status tiles reuse
+`Card`. Article rows remain an editorial list, and sanitized article HTML keeps
+its `.prose` stylesheet.
+
+Add widgets through the CLI from `packages/ui`, as its README requires. Date
+pickers, richer selectors and charts can be added when a screen needs them. These
+React components currently run in the SPA; the Askama reader continues to use
+server-rendered HTML and native disclosures until dedicated widget roots are wired.
 
 ## Tests
 

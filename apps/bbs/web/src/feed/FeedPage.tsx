@@ -1,3 +1,4 @@
+import { Button } from "@herkules/ui/components/button";
 import { Link } from "@tanstack/react-router";
 import { useSuspenseInfiniteQuery, useSuspenseQuery } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
@@ -32,9 +33,11 @@ export function FeedPage() {
       {search.q && (
         <p className="meta flex items-baseline gap-2 pt-3">
           筛选：「{search.q}」
-          <Link to="/" search={(s) => ({ ...s, q: undefined })} aria-label="清除关键词">
-            ×
-          </Link>
+          <Button asChild variant="ghost" size="icon-sm">
+            <Link to="/" search={(s) => ({ ...s, q: undefined })} aria-label="清除关键词">
+              ×
+            </Link>
+          </Button>
         </p>
       )}
       {items.length === 0 ? (

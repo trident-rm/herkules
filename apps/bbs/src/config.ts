@@ -33,6 +33,10 @@ export const configSchema = z.object({
   WEB_DIR: z.string().min(1).optional(),
   /** The search seam (db/search). `pgroonga` is the FRAME check-5 fallback and needs the custom image. */
   SEARCH_INDEX: z.enum(["trgm", "pgroonga"]).default("trgm"),
+  /** Optional Rust corpus reads; OAuth, transports and writers remain here. */
+  BBS_RUST_READ_ORIGIN: z.string().url().optional(),
+  BBS_RUST_NATIVE: z.enum(["true", "false"]).default("false"),
+  BBS_RUST_BINARY: z.string().min(1).default("/usr/local/bin/herkules-bbs"),
   /** `false` skips the boot-time CREATE DATABASE probe (db/index.ts ensureDatabase); run `createdb bbs` once instead. */
   BBS_CREATE_DATABASE: z
     .enum(["true", "false"])
@@ -60,6 +64,9 @@ export interface Config {
   /** Absolute path, or null when static serving is off (dev). */
   readonly webDir: string | null;
   readonly searchIndex: "trgm" | "pgroonga";
+  readonly rustReadOrigin: string | null;
+  readonly rustNative: boolean;
+  readonly rustBinary: string;
   readonly createDatabase: boolean;
   readonly port: number;
   readonly isProduction: boolean;
@@ -70,6 +77,33 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const origin = new URL(raw.PUBLIC_ORIGIN).origin;
   const appOrigin = new URL(raw.APP_ORIGIN).origin;
   const authInternal = raw.AUTH_INTERNAL_URL ? new URL(raw.AUTH_INTERNAL_URL).origin : origin;
+  let rustReadOrigin: string | null = null;
+  const rustOrigin =
+    raw.BBS_RUST_READ_ORIGIN ??
+    (raw.BBS_RUST_NATIVE === "true" ? "http://127.0.0.1:3203" : undefined);
+  if (rustOrigin) {
+    const url = new URL(rustOrigin);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    )
+      throw new TypeError(
+        "BBS_RUST_READ_ORIGIN must be an HTTP(S) origin without credentials or a path",
+      );
+    if (!/^postgres(ql)?:\/\//.test(raw.DATABASE_URL)) {
+      throw new TypeError("BBS_RUST_READ_ORIGIN requires the shared Postgres corpus, not PGlite");
+    }
+    if (raw.SEARCH_INDEX !== "trgm") {
+      throw new Error("BBS_RUST_READ_ORIGIN requires SEARCH_INDEX=trgm");
+    }
+    rustReadOrigin = url.origin;
+  }
+  if (raw.BBS_RUST_NATIVE === "true" && raw.BBS_CLIENT_SECRET.length < 32)
+    throw new TypeError("Native Rust requires BBS_CLIENT_SECRET of at least 32 characters");
   return Object.freeze({
     origin,
     appOrigin,
@@ -82,6 +116,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cookieSecret: raw.BBS_COOKIE_SECRET,
     webDir: raw.WEB_DIR ? resolve(raw.WEB_DIR) : null,
     searchIndex: raw.SEARCH_INDEX,
+    rustReadOrigin,
+    rustNative: raw.BBS_RUST_NATIVE === "true",
+    rustBinary: raw.BBS_RUST_BINARY,
     createDatabase: raw.BBS_CREATE_DATABASE,
     port: raw.PORT,
     isProduction: raw.NODE_ENV === "production",

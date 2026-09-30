@@ -1,0 +1,22 @@
+{
+  "resourceTemplates": [
+    {
+      "name": "article",
+      "title": "Article (markdown or text)",
+      "uriTemplate": "rm://articles/{id}",
+      "mimeType": "text/markdown"
+    },
+    {
+      "name": "article-overview",
+      "title": "Article overview (JSON)",
+      "uriTemplate": "rm://articles/{id}/overview",
+      "mimeType": "application/json"
+    },
+    {
+      "name": "article-kb",
+      "title": "Article knowledge-base entry (JSON)",
+      "uriTemplate": "rm://articles/{id}/kb",
+      "mimeType": "application/json"
+    }
+  ]
+}

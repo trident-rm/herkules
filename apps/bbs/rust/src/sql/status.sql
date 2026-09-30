@@ -1,0 +1,15 @@
+SELECT
+ (SELECT count(*)::int FROM articles) AS total,
+ (SELECT count(*)::int FROM articles WHERE status='fetched') AS fetched,
+ (SELECT count(*)::int FROM articles WHERE status='skipped') AS skipped,
+ (SELECT count(*)::int FROM article_tags JOIN articles ON articles.id=article_tags.article_id AND articles.status='fetched') AS tags,
+ (SELECT count(*)::int FROM article_images JOIN articles ON articles.id=article_images.article_id AND articles.status='fetched') AS images,
+ (SELECT count(*)::int FROM article_links JOIN articles ON articles.id=article_links.article_id AND articles.status='fetched') AS links,
+ (SELECT count(*)::int FROM article_ai JOIN articles ON articles.id=article_ai.article_id AND articles.status='fetched' WHERE article_ai.status='ready') AS ai_ready,
+ (SELECT count(*)::int FROM articles WHERE status='fetched' AND NOT EXISTS (SELECT 1 FROM article_ai WHERE article_ai.article_id=articles.id)) AS ai_missing,
+ (SELECT count(*)::int FROM kb_entities WHERE article_count>0) AS entities,
+ (SELECT max(started_at) FROM poll_runs) AS last_checked_at,
+ (SELECT max(backfill_completed_at) FROM sources) AS backfill_completed_at,
+ (SELECT name FROM sources ORDER BY created_at LIMIT 1) AS site_name,
+ (SELECT site_url FROM sources ORDER BY created_at LIMIT 1) AS site_url,
+ (SELECT max(finished_at) FROM import_runs WHERE ok AND NOT noop) AS imported_at

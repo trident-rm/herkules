@@ -37,17 +37,22 @@ export function ScopeLinks({ scope, on }: { scope: Scope; on: "/" | "/search" })
       aria-label="搜索范围"
     >
       {SCOPES.map((item) => (
-        <Link
-          className="px-4 text-sm leading-[42px] text-muted-foreground hover:text-ink hover:no-underline aria-[current]:bg-accent aria-[current]:text-accent-ink max-md:flex-1 max-md:text-center [&+a]:border-l [&+a]:border-line"
+        <Button
+          asChild
+          variant="ghost"
           key={item.value}
-          to={on}
-          activeOptions={EXACT}
-          title={item.title}
-          search={(s) => ({ ...s, scope: item.value })}
-          aria-current={scope === item.value ? "true" : undefined}
+          className="h-[42px] rounded-none px-4 text-muted-foreground hover:bg-transparent hover:text-ink aria-[current]:bg-accent aria-[current]:text-accent-ink max-md:flex-1 [&+a]:border-l [&+a]:border-line"
         >
-          {item.label}
-        </Link>
+          <Link
+            to={on}
+            activeOptions={EXACT}
+            title={item.title}
+            search={(s) => ({ ...s, scope: item.value })}
+            aria-current={scope === item.value ? "true" : undefined}
+          >
+            {item.label}
+          </Link>
+        </Button>
       ))}
     </div>
   );

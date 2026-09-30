@@ -1,3 +1,4 @@
+import { Button } from "@herkules/ui/components/button";
 import { Badge } from "@herkules/ui/components/badge";
 import { Link } from "@tanstack/react-router";
 
@@ -22,26 +23,36 @@ export function CategoryTabs({ tags, search }: { tags: TagIndexDTO; search: Feed
   return (
     <section className="mt-[22px]" aria-label="分类">
       <div className="flex gap-[26px] overflow-x-auto border-b border-line [scrollbar-width:none]">
-        <Link
-          className={TAB}
-          to="/"
-          activeOptions={EXACT}
-          search={(s) => ({ ...s, group: undefined, tag: undefined })}
-          aria-current={group === undefined ? "true" : undefined}
+        <Button
+          asChild
+          variant="ghost"
+          className={`${TAB} h-auto rounded-none hover:bg-transparent`}
         >
-          全部 <span className={N}>{tags.total}</span>
-        </Link>
-        {tags.groups.map((g) => (
           <Link
-            key={g.name}
-            className={TAB}
             to="/"
             activeOptions={EXACT}
-            search={(s) => ({ ...s, group: g.name, tag: undefined })}
-            aria-current={group === g.name ? "true" : undefined}
+            search={(s) => ({ ...s, group: undefined, tag: undefined })}
+            aria-current={group === undefined ? "true" : undefined}
           >
-            {g.name} <span className={N}>{g.count}</span>
+            全部 <span className={N}>{tags.total}</span>
           </Link>
+        </Button>
+        {tags.groups.map((g) => (
+          <Button
+            asChild
+            variant="ghost"
+            className={`${TAB} h-auto rounded-none hover:bg-transparent`}
+            key={g.name}
+          >
+            <Link
+              to="/"
+              activeOptions={EXACT}
+              search={(s) => ({ ...s, group: g.name, tag: undefined })}
+              aria-current={group === g.name ? "true" : undefined}
+            >
+              {g.name} <span className={N}>{g.count}</span>
+            </Link>
+          </Button>
         ))}
       </div>
       {group !== undefined && subTags.length > 0 && (

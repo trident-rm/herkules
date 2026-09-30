@@ -1,3 +1,5 @@
+import { Card } from "@herkules/ui/components/card";
+import { Disclosure } from "../shell/Disclosure.tsx";
 import type { ArticleAiDTO } from "../../../src/api/dto.ts";
 import { maturityClass, sectionLabels } from "../lib/ai.ts";
 
@@ -21,24 +23,24 @@ export function AiOverview({ ai }: { ai: ArticleAiDTO }) {
   switch (ai.status) {
     case "pending":
       return (
-        <div className={CARD}>
+        <Card className={`${CARD} shadow-none`}>
           <p className={`${P} text-muted-foreground`}>这篇文章的 AI 概览尚未生成。</p>
-        </div>
+        </Card>
       );
     case "failed":
       return (
-        <div className={CARD}>
+        <Card className={`${CARD} shadow-none`}>
           <p className={`${P} text-danger`}>概览生成失败{ai.error ? `：${ai.error}` : ""}。</p>
-        </div>
+        </Card>
       );
     case "ready":
       return ai.overview ? (
         <OverviewBody overview={ai.overview} model={ai.model} />
       ) : (
         // `ready` without a body is a generator bug, not a state worth a design.
-        <div className={CARD}>
+        <Card className={`${CARD} shadow-none`}>
           <p className={`${P} text-muted-foreground`}>这篇文章的 AI 概览尚未生成。</p>
-        </div>
+        </Card>
       );
     default: {
       const never: never = ai.status;
@@ -52,7 +54,7 @@ function OverviewBody({ overview, model }: { overview: Overview; model: string |
   const { extras } = overview;
   const maturity = maturityClass(overview.maturity.status);
   return (
-    <div className={CARD}>
+    <Card className={`${CARD} shadow-none`}>
       <div className="flex flex-wrap gap-1.5">
         {overview.genre && <span className="pill border-line-2 text-ink-2">{overview.genre}</span>}
         {maturity && (
@@ -189,13 +191,17 @@ function OverviewBody({ overview, model }: { overview: Overview; model: string |
         </>
       )}
       {overview.faq.length > 0 && (
-        <details className="border-t border-line pt-2.5">
-          <summary className="cursor-pointer text-[13px] font-semibold text-ink-2">
-            常见问题
-            <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">
-              {overview.faq.length}
-            </span>
-          </summary>
+        <Disclosure
+          className="border-t border-line pt-2.5"
+          title={
+            <>
+              常见问题
+              <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">
+                {overview.faq.length}
+              </span>
+            </>
+          }
+        >
           <dl className="mt-2.5 flex flex-col gap-2.5">
             {overview.faq.map((item, index) => (
               <div key={index}>
@@ -211,7 +217,7 @@ function OverviewBody({ overview, model }: { overview: Overview; model: string |
               </div>
             ))}
           </dl>
-        </details>
+        </Disclosure>
       )}
       {overview.maturity.evidence && (
         <p className={`${P} text-[13px] text-muted-foreground`}>
@@ -221,6 +227,6 @@ function OverviewBody({ overview, model }: { overview: Overview; model: string |
       <p className={`${P} ${FINE}`}>
         由 {model ?? "AI"} 根据正文、附件、仓库文档与参考文献生成，可能有误，请以原文为准。
       </p>
-    </div>
+    </Card>
   );
 }
