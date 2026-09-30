@@ -68,6 +68,26 @@ describe("registration quirks", () => {
     expect(REDIRECT_ALLOW.some((re) => re.test("http://localhost.evil.example/cb"))).toBe(false);
   });
 
+  test("ChatGPT registration accepts only its exact stable OAuth callback", () => {
+    const callback = "https://chatgpt.com/connector_platform_oauth_redirect";
+    expect(applyQuirks({ redirect_uris: [callback], application_type: "web" })).toEqual({
+      redirect_uris: [callback],
+      application_type: "web",
+    });
+    for (const redirect of [
+      `${callback}/`,
+      `${callback}?next=https://evil.example`,
+      `${callback}#fragment`,
+      callback.replace("https:", "http:"),
+      callback.replace("chatgpt.com", "chatgpt.com.evil.example"),
+      callback.replace("chatgpt.com", "evil.example@chatgpt.com"),
+    ]) {
+      expect(applyQuirks({ redirect_uris: [callback, redirect] })).toMatchObject({
+        error: "invalid_redirect_uri",
+      });
+    }
+  });
+
   test("registerBeforeHook rewrites the body or throws a 400", () => {
     expect(registerBeforeHook({ body: { redirect_uris: ["http://localhost:1/cb"] } })).toEqual({
       context: { body: { redirect_uris: ["http://localhost:1/cb"], application_type: "native" } },
