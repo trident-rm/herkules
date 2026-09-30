@@ -55,20 +55,29 @@ pub enum SearchError {
     Empty,
 }
 impl FeedQuery {
-    pub fn validate_search(mut self) -> Result<SearchQuery, SearchError> {
+    pub fn validate_search(self) -> Result<SearchQuery, SearchError> {
+        self.validate_search_with_bounds(true)
+    }
+    pub(crate) fn validate_search_with_bounds(
+        mut self,
+        bounded: bool,
+    ) -> Result<SearchQuery, SearchError> {
         let q = self.q.clone().unwrap_or_default();
-        if q.trim_matches(js_whitespace).is_empty() {
+        if bounded && q.trim_matches(js_whitespace).is_empty() {
             return Err(SearchError::Query(FeedError::InvalidQuery));
         }
-        if self
-            .cursor
-            .as_ref()
-            .is_some_and(|s| s.encode_utf16().count() > 512)
+        if bounded
+            && self
+                .cursor
+                .as_ref()
+                .is_some_and(|s| s.encode_utf16().count() > 512)
         {
             return Err(SearchError::Query(FeedError::InvalidQuery));
         }
         let cursor = self.cursor.take();
-        let valid = self.validate().map_err(SearchError::Query)?;
+        let valid = self
+            .validate_with_bounds(bounded)
+            .map_err(SearchError::Query)?;
         let terms = terms(&q);
         if terms.is_empty() {
             return Err(SearchError::Empty);

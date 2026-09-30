@@ -26,12 +26,16 @@ pub struct ValidKb {
 }
 impl KbQuery {
     pub fn validate(self) -> Result<ValidKb, FeedError> {
+        self.validate_with_bounds(true)
+    }
+    pub(crate) fn validate_with_bounds(self, bounded: bool) -> Result<ValidKb, FeedError> {
         let q = self.q.unwrap_or_default();
         let q = q.trim_matches(js_whitespace);
-        if q.encode_utf16().count() > 200
-            || [&self.domain, &self.robot, &self.genre]
-                .iter()
-                .any(|s| s.as_ref().is_some_and(|s| s.encode_utf16().count() > 64))
+        if bounded
+            && (q.encode_utf16().count() > 200
+                || [&self.domain, &self.robot, &self.genre]
+                    .iter()
+                    .any(|s| s.as_ref().is_some_and(|s| s.encode_utf16().count() > 64)))
         {
             return Err(FeedError::InvalidQuery);
         }
@@ -51,11 +55,17 @@ pub struct EntityQuery {
 }
 impl EntityQuery {
     pub fn validate(self) -> Result<(Option<String>, usize), FeedError> {
+        self.validate_with_bounds(true)
+    }
+    pub(crate) fn validate_with_bounds(
+        self,
+        bounded: bool,
+    ) -> Result<(Option<String>, usize), FeedError> {
         let q = self
             .q
             .map(|q| q.trim_matches(js_whitespace).to_owned())
             .filter(|s| !s.is_empty());
-        if q.as_ref().is_some_and(|s| s.encode_utf16().count() > 120) {
+        if bounded && q.as_ref().is_some_and(|s| s.encode_utf16().count() > 120) {
             return Err(FeedError::InvalidQuery);
         }
         Ok((q, parse_limit(self.limit.as_deref(), 200, 500)?))

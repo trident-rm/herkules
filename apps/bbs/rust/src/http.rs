@@ -1,15 +1,19 @@
 use axum::{
     Json, Router,
+    extract::Request,
     extract::{
         Path, Query, State,
         rejection::{PathRejection, QueryRejection},
     },
+    http::HeaderMap,
     http::{StatusCode, header},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use serde::Deserialize;
 use serde_json::json;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     feed::{FeedError, FeedQuery},
@@ -24,11 +28,18 @@ pub struct AppState {
     pub library: Library,
     pub app_origin: String,
     pub stylesheet: Option<String>,
+    pub auth: Option<Arc<crate::session::Auth>>,
+    pub refresh_pool: Option<sqlx::PgPool>,
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let mut app = Router::new()
         .route("/healthz", get(health))
+        .route("/api/viewer", get(viewer))
+        .route("/api/me", get(me))
+        .route("/login", get(login))
+        .route("/callback", get(callback))
+        .route("/logout", post(logout))
         .route("/api/articles", get(feed))
         .route("/api/search", get(search))
         .route("/api/kb/browse", get(kb_browse))
@@ -43,7 +54,180 @@ pub fn router(state: AppState) -> Router {
         .route("/api/tags", get(tags))
         .route("/articles/{id}", get(article_page))
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not_found", "no such route") })
-        .with_state(state)
+        .layer(middleware::from_fn_with_state(state.clone(), api_auth));
+    if let Some(auth) = &state.auth {
+        use rmcp::transport::streamable_http_server::{
+            StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+        };
+        let library = state.library.clone();
+        let service = StreamableHttpService::new(
+            move || {
+                Ok(crate::mcp::Mcp {
+                    library: library.clone(),
+                })
+            },
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default()
+                .with_legacy_session_mode(false)
+                .with_json_response(true)
+                .with_allowed_origins([
+                    state.app_origin.clone(),
+                    auth.api_resource
+                        .strip_suffix("/api/bbs")
+                        .unwrap()
+                        .to_owned(),
+                ]),
+        );
+        app = app
+            .route(
+                "/mcp/bbs/healthz",
+                get(|| async { Json(json!({"ok":true})) }),
+            )
+            .route_service("/mcp/bbs", service)
+            .layer(middleware::from_fn_with_state(state.clone(), mcp_auth));
+    }
+    app.with_state(state)
+}
+async fn mcp_auth(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
+    if request.uri().path() != "/mcp/bbs" {
+        return next.run(request).await;
+    }
+    let auth = state.auth.as_ref().expect("MCP only mounted with auth");
+    match auth
+        .verifier
+        .header(request.headers(), &auth.mcp_resource)
+        .await
+    {
+        Ok(principal) => {
+            request.extensions_mut().insert(principal);
+            next.run(request).await
+        }
+        Err(failure) => failure.response(&auth.mcp_resource, true),
+    }
+}
+async fn api_auth(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
+    if !request.uri().path().starts_with("/api/") {
+        return next.run(request).await;
+    }
+    let Some(auth) = &state.auth else {
+        if request.headers().contains_key(header::AUTHORIZATION) {
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "unavailable",
+                "native authentication is not configured",
+            );
+        }
+        return next.run(request).await;
+    };
+    let outcome = auth.resolve(request.headers(), request.method()).await;
+    if outcome.explicit
+        && let Some(f) = outcome.failure
+    {
+        return crate::session::with_cookies(
+            f.response(&auth.api_resource, false),
+            outcome.cookies,
+        );
+    }
+    if let Some(p) = outcome.principal {
+        request.extensions_mut().insert(p);
+    } else if request.uri().path() == "/api/me" {
+        return crate::session::with_cookies(
+            outcome
+                .failure
+                .unwrap_or(crate::auth::Failure::Missing)
+                .response(&auth.api_resource, false),
+            outcome.cookies,
+        );
+    }
+    let mut response = crate::session::with_cookies(next.run(request).await, outcome.cookies);
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
+}
+async fn viewer(
+    State(state): State<AppState>,
+    p: Option<axum::Extension<crate::auth::Principal>>,
+) -> Response {
+    let v = match (&state.auth, p) {
+        (Some(auth), Some(p)) => auth.viewer(&p).await,
+        _ => serde_json::Value::Null,
+    };
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({"viewer":v})),
+    )
+        .into_response()
+}
+async fn me(
+    State(state): State<AppState>,
+    p: Option<axum::Extension<crate::auth::Principal>>,
+) -> Response {
+    match (&state.auth, p) {
+        (Some(auth), Some(p)) => Json(auth.viewer(&p).await).into_response(),
+        _ => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "native authentication is not configured",
+        ),
+    }
+}
+async fn login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    match state.auth {
+        Some(auth) => auth.login(&headers, &q),
+        None => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "native authentication is not configured",
+        ),
+    }
+}
+async fn callback(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    match state.auth {
+        Some(auth) => auth.callback(&headers, &q).await,
+        None => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "native authentication is not configured",
+        ),
+    }
+}
+async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    body: String,
+) -> Response {
+    let next = if headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| {
+            s.to_ascii_lowercase()
+                .starts_with("application/x-www-form-urlencoded")
+        }) {
+        url::form_urlencoded::parse(body.as_bytes())
+            .find(|(k, _)| k == "next")
+            .map(|(_, v)| v.into_owned())
+    } else {
+        None
+    }
+    .or_else(|| q.get("next").cloned());
+    match state.auth {
+        Some(auth) => auth.logout(&headers, next.as_deref()).await,
+        None => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "native authentication is not configured",
+        ),
+    }
 }
 
 pub enum ApiError {
@@ -183,10 +367,11 @@ struct EntityKeyQuery {
 fn entity_request_key(
     path: Result<Path<String>, PathRejection>,
     query: Result<Query<EntityKeyQuery>, QueryRejection>,
+    allow_key: bool,
 ) -> Result<String, ApiError> {
     let name = path.map_err(|_| ApiError::Invalid)?.0;
     let q = query.map_err(|_| ApiError::Invalid)?.0;
-    if let Some(key) = q.key {
+    if allow_key && let Some(key) = q.key {
         if key.encode_utf16().count() > 400 {
             return Err(ApiError::Invalid);
         }
@@ -202,7 +387,7 @@ async fn entity(
     path: Result<Path<String>, PathRejection>,
     query: Result<Query<EntityKeyQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let key = entity_request_key(path, query)?;
+    let key = entity_request_key(path, query, state.auth.is_none())?;
     Ok(Json(state.library.entity(&key).await?.ok_or(ApiError::Missing)?).into_response())
 }
 
@@ -227,7 +412,7 @@ async fn entity_head(
     path: Result<Path<String>, PathRejection>,
     query: Result<Query<EntityKeyQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let key = entity_request_key(path, query)?;
+    let key = entity_request_key(path, query, state.auth.is_none())?;
     Ok(Json(
         state
             .library
@@ -247,6 +432,10 @@ async fn article(
         .article(&id(path)?)
         .await?
         .ok_or(ApiError::Missing)?;
+    if let Some(pool) = &state.refresh_pool
+        && let Err(e)=sqlx::query("UPDATE articles SET refresh_requested_at = now(), updated_at = now() WHERE id = $1 AND status = 'fetched' AND refresh_requested_at IS NULL AND coalesce(fetched_at, '-infinity'::timestamptz) < now() - interval '24 hours'").bind(&article.id).execute(pool).await {
+            tracing::warn!(error=%e,"article refresh request failed");
+    }
     Ok(Json(article).into_response())
 }
 
@@ -366,6 +555,8 @@ mod tests {
             ),
             app_origin: "https://bbs.example".into(),
             stylesheet: None,
+            auth: None,
+            refresh_pool: None,
         });
         for (path, status) in [
             ("/api/articles/not-an-id", 400),
@@ -384,7 +575,7 @@ mod tests {
                 400,
             ),
             ("/articles/not-an-id", 404),
-            ("/api/viewer", 404),
+            ("/api/me", 503),
             ("/mcp", 404),
         ] {
             let res = app

@@ -3,6 +3,8 @@
  * This script creates, seeds and drops its own randomly named database.
  */
 import assert from "node:assert/strict";
+import { nativeParity } from "./rust-native-parity.ts";
+import { issuerParity } from "./rust-issuer-parity.ts";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { resolve } from "node:path";
@@ -76,7 +78,8 @@ try {
   });
   const json = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
   const rust = withRustReads(fixture.library, { origin });
-  let checks = 0;
+  let checks = await nativeParity(databaseUrl.href, fixture.library, fixture.db, root);
+  checks += await issuerParity(databaseUrl.href, root);
   const feedQueries: ArticleListQuery[] = [
     { limit: 1 },
     { limit: 2 },

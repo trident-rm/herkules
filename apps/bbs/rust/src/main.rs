@@ -56,10 +56,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "WEB_DIR unset: reader preview uses semantic HTML without the Vite stylesheet"
         );
     }
+    let auth = config
+        .auth
+        .map(herkules_bbs::session::Auth::new)
+        .transpose()?
+        .map(std::sync::Arc::new);
+    // Keep corpus reads read-only. Native REST has one narrowly scoped write:
+    // the existing idempotent stale-article refresh request.
+    let refresh_pool = if auth.is_some() {
+        Some(
+            PgPoolOptions::new()
+                .max_connections(1)
+                .acquire_timeout(Duration::from_secs(5))
+                .after_connect(|c, _| {
+                    Box::pin(async move {
+                        sqlx::query("SET statement_timeout = '5s'")
+                            .execute(c)
+                            .await?;
+                        Ok(())
+                    })
+                })
+                .connect(&config.database_url)
+                .await?,
+        )
+    } else {
+        None
+    };
     let mut app = router(AppState {
         library: Library::new(pool.clone()),
         app_origin: config.app_origin,
         stylesheet: stylesheet.map(|s| s.url),
+        auth,
+        refresh_pool: refresh_pool.clone(),
     });
     if let Some(web_dir) = config.web_dir {
         app = app.nest_service(
@@ -73,6 +101,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_graceful_shutdown(shutdown())
         .await?;
     pool.close().await;
+    if let Some(pool) = refresh_pool {
+        pool.close().await;
+    }
     Ok(())
 }
 

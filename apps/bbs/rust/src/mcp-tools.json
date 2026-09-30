@@ -1,0 +1,561 @@
+[
+  {
+    "name": "search_articles",
+    "title": "Search articles",
+    "description": "Ranked substring search over titles, authors, tags, introductions and bodies (scope=all), titles only (scope=title) or the knowledge-base entries (scope=kb). Every whitespace-separated term must occur. Returns snippets with [term] markers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "default": "all",
+          "type": "string",
+          "enum": ["all", "title", "kb"]
+        },
+        "tag": {
+          "description": "Exact `group/name` tag",
+          "type": "string"
+        },
+        "group": {
+          "description": "Tag group (the part before `/`)",
+          "type": "string"
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "cursor": {
+          "description": "Opaque cursor from a previous page",
+          "type": "string"
+        }
+      },
+      "required": ["query"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "hits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "excerpt": {
+                "type": "string"
+              },
+              "snippet": {
+                "type": "string"
+              },
+              "tldr": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "bodyChars": {
+                "type": "number"
+              }
+            },
+            "required": ["id", "title", "date", "url", "tags", "score", "bodyChars"],
+            "additionalProperties": false
+          }
+        },
+        "terms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "required": ["hits", "terms"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_articles",
+    "title": "List articles",
+    "description": "The date-ordered feed (newest first), optionally filtered by tag or group.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "description": "Exact `group/name` tag",
+          "type": "string"
+        },
+        "group": {
+          "description": "Tag group (the part before `/`)",
+          "type": "string"
+        },
+        "limit": {
+          "default": 20,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "cursor": {
+          "description": "Opaque cursor from a previous page",
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "articles": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "excerpt": {
+                "type": "string"
+              },
+              "snippet": {
+                "type": "string"
+              },
+              "tldr": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              },
+              "bodyChars": {
+                "type": "number"
+              }
+            },
+            "required": ["id", "title", "date", "url", "tags", "score", "bodyChars"],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "type": "string"
+        }
+      },
+      "required": ["articles"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_article",
+    "title": "Get article",
+    "description": "One article. `include` selects content (paged by characters), overview, kb, links, images; default content+overview+links.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Article id (26-character ULID)"
+        },
+        "include": {
+          "default": ["content", "overview", "links"],
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["content", "overview", "kb", "links", "images"]
+          }
+        },
+        "format": {
+          "default": "text",
+          "type": "string",
+          "enum": ["text", "markdown"]
+        },
+        "max_chars": {
+          "default": 30000,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "offset": {
+          "default": 0,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": ["id"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_overview",
+    "title": "Get overview",
+    "description": "The model-written overview (tldr, summary, key points, FAQ) of one article; status pending when none exists.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Article id (26-character ULID)"
+        }
+      },
+      "required": ["id"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_kb",
+    "title": "Get knowledge-base entry",
+    "description": "The structured knowledge-base entry (problem, approach, components, parameters, decisions, pitfalls, entities) plus image captions of one article.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Article id (26-character ULID)"
+        }
+      },
+      "required": ["id"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "search_kb",
+    "title": "Search knowledge base",
+    "description": "Knowledge-base cards filtered by a substring query and/or domain, robot type, genre; returns the cards and the facet counts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "robot": {
+          "type": "string"
+        },
+        "genre": {
+          "type": "string"
+        },
+        "limit": {
+          "default": 20,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "number"
+        },
+        "cards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              }
+            },
+            "required": ["name", "count"],
+            "additionalProperties": false
+          }
+        },
+        "robotTypes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              }
+            },
+            "required": ["name", "count"],
+            "additionalProperties": false
+          }
+        },
+        "genres": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              }
+            },
+            "required": ["name", "count"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["total", "cards", "domains", "robotTypes", "genres"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_entities",
+    "title": "List entities",
+    "description": "Named entities (parts, boards, algorithms, teams) with article counts, most-cited first; `query` filters by name substring.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "default": 100,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "articleCount": {
+                "type": "number"
+              }
+            },
+            "required": ["key", "name", "articleCount"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["entities"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "get_entity",
+    "title": "Get entity",
+    "description": "One entity by name or key with every article that mentions it (newest first). compact=false includes each article's full kb entry.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "compact": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": ["name"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_tags",
+    "title": "List tags",
+    "description": "Every `group/name` tag with its article count, the group counts, and the fetched total.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              }
+            },
+            "required": ["name", "count"],
+            "additionalProperties": false
+          }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "count": {
+                "type": "number"
+              }
+            },
+            "required": ["name", "count"],
+            "additionalProperties": false
+          }
+        },
+        "total": {
+          "type": "number"
+        }
+      },
+      "required": ["items", "groups", "total"],
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "library_status",
+    "title": "Library status",
+    "description": "Counts of the archive, when the corpus was imported, and who is asking.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "$schema": "https://json-schema.org/draft/2020-12/schema"
+    },
+    "outputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  }
+]

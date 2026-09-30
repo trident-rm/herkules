@@ -54,7 +54,7 @@ The importer replaces the target corpus. Keep this URL pointing to the separate 
 
 `PoolTimedOut` during startup means the connection pool could not establish a usable connection in time. Check the server, published port, credentials and database name before changing the pool size. Once connected, an `articles`-table error means the existing BBS migrations still need to run.
 
-`BBS_RUST_LISTEN` defaults to `127.0.0.1:3203`. `BBS_RUST_DB_CONNECTIONS` defaults to 2 and accepts 1–10. Connections use read-only transactions, a five-second statement timeout and five-second acquisition timeout. For deployment, use a database role granted only corpus SELECT privileges. `RUST_LOG` controls tracing. SIGINT and SIGTERM initiate graceful shutdown.
+`BBS_RUST_LISTEN` defaults to `127.0.0.1:3203`. `BBS_RUST_DB_CONNECTIONS` defaults to 2 and accepts 1–10. Corpus connections use read-only transactions, a five-second statement timeout and five-second acquisition timeout. In adapter mode, use a database role granted only corpus SELECT privileges. Native mode also opens one writable connection for article refresh requests; grant UPDATE on `articles.refresh_requested_at` and `articles.updated_at`. `RUST_LOG` controls tracing. SIGINT and SIGTERM initiate graceful shutdown.
 
 | Route                                                    | Behavior                                                                |
 | -------------------------------------------------------- | ----------------------------------------------------------------------- |
@@ -74,7 +74,7 @@ The importer replaces the target corpus. Keep this URL pointing to the separate 
 | `/articles/{id}`                                         | Askama article reader preview with full body and metadata               |
 | `/assets/*`                                              | Vite build assets when `WEB_DIR` is set                                 |
 
-Corpus reads are anonymous, matching the existing application. This process has no login, session, membership or authenticated MCP implementation. Keep it on loopback or the private service network during this increment. The reader now includes a sticky desktop sidebar with a table of contents, AI overview, specifications and resources. On narrow screens, anchor controls reach the same sections; specifications use native disclosures. The React mobile sheet, lightbox and active-heading indicator are still pending, along with feed/search/knowledge-base SSR and account pages. See the [frontend direction](../MIGRATION.md#frontend-direction) for the React widget plan.
+Corpus reads are anonymous, matching the existing application. Without native authentication configuration, this process is a read adapter and SSR preview: MCP is unavailable and authenticated requests fail closed. Keep this mode on loopback or the private service network. The reader now includes a sticky desktop sidebar with a table of contents, AI overview, specifications and resources. On narrow screens, anchor controls reach the same sections; specifications use native disclosures. The React mobile sheet, lightbox and active-heading indicator are still pending, along with feed/search/knowledge-base SSR and account pages. See the [frontend direction](../MIGRATION.md#frontend-direction) for the React widget plan.
 
 Askama escapes metadata and plain-text fallback bodies. Only stored `content_html` is rendered as HTML: the existing corpus writer owns sanitization. The page sets a script-free CSP, `no-store`, `nosniff` and `no-referrer`.
 
@@ -89,6 +89,34 @@ BBS_RUST_READ_ORIGIN=http://127.0.0.1:3203
 Both services must point at the same Postgres corpus. The `Library` adapter delegates all twelve corpus read methods, including both head metadata methods. Node still owns API validation and presentation, OAuth/session checks, MCP transport and token validation, admission, article-refresh hooks, migrations, crawler and bot. Delegation requires `SEARCH_INDEX=trgm`; both Node configuration and Rust startup reject another search index. It sends no browser cookies or bearer tokens to Rust. Upstream errors fail the request; they do not silently switch back to Node. Remove the variable and restart Node to restore all original reads.
 
 This option does not change browser page routing: open the Rust port directly for the SSR preview. Do not replace the production `/articles/*` routes yet, because navigation and reader interaction parity are incomplete.
+
+## Native REST, MCP and browser OAuth
+
+Set `PUBLIC_ORIGIN` to enable native BBS authentication and MCP. This is the platform identity origin, such as `https://herkules.dev`, not the BBS origin. Set `APP_ORIGIN` to the BBS browser origin. Rust derives the issuer `/auth`, API audience `/api/bbs` and MCP audience `/mcp/bbs` from `PUBLIC_ORIGIN`. Optional `AUTH_INTERNAL_URL` changes the origin used for server-to-server requests, preserving the public issuer and audiences.
+
+```sh
+: "${PUBLIC_ORIGIN:?Set the identity platform origin}"
+: "${BBS_CLIENT_SECRET:?Set the existing confidential bbs OAuth client secret}"
+: "${BBS_COOKIE_SECRET:?Set the existing BBS cookie encryption secret}"
+export PUBLIC_ORIGIN BBS_CLIENT_SECRET BBS_COOKIE_SECRET
+DATABASE_URL="$BBS_POSTGRES_URL" APP_ORIGIN=http://localhost:3203 \
+WEB_DIR="$PWD/apps/bbs/dist/client" cargo run -p herkules-bbs --locked
+```
+
+Both secrets require at least 32 characters. Register the exact `APP_ORIGIN/callback` redirect with the existing `bbs` OAuth client before testing another port. Rust does not load `.env` files. Do not inherit auth variables when intentionally running the anonymous read adapter.
+
+Native mode serves `/api/viewer`, guarded `/api/me`, `/login`, `/callback`, POST-only `/logout`, authenticated Streamable HTTP `/mcp/bbs` and public `/mcp/bbs/healthz`. The official Rust MCP SDK handles transport negotiation; all ten existing tools and three resource templates preserve the Node metadata and presenters. Bearer tokens use Ed25519 signatures, strict issuer/audience/claim checks and bounded JWKS caching. API and MCP audiences are separate; an explicit invalid bearer never falls back to a cookie. MCP requires bearer authentication and does not use browser cookies.
+
+Browser login uses the existing confidential client with PKCE, encrypted multi-attempt state, safe return paths, encrypted session cookies and refresh-token rotation. Cookie format and keys match Node, allowing compatible sessions during a staged switch. Concurrent refreshes share an in-flight request; successful rotations are retained briefly for other tabs. Logout clears both cookies and attempts issuer revocation. User profile lookup stays with the existing identity service. Better Auth remains TypeScript; Rust is its OAuth client and resource server.
+
+Native article reads retain the existing best-effort stale-article refresh request. MCP article reads remain read-only. No migration, crawler, AI worker or bot ownership moves in this increment. The SPA, account destination and complete SSR navigation are not served by Rust yet; native mode is ready for contract testing, not a complete browser or production cutover. Invalid REST parameter responses preserve status/error codes, but some validation descriptions are generic instead of the Node Zod diagnostic text.
+
+MCP metadata is generated from the Node contract; regenerate it from `apps/bbs` after intentional tool contract changes:
+
+```sh
+node --experimental-strip-types scripts/rust-mcp-contract.ts
+vp check --fix
+```
 
 ## Feed contract
 
@@ -132,4 +160,4 @@ BBS_RUST_TEST_POSTGRES=postgres://bbs_test:password@localhost/postgres \
 vp run "@herkules/bbs#test:rust:parity"
 ```
 
-The parity task builds web assets and Rust, creates a uniquely named database, runs the existing migration and fixture loader, compares both implementations on the same rows, checks rendered HTML and CSS, stops Rust, and drops only its own database. It does not use the existing corpus database. CI runs parity against Postgres 18; `vp run ready` includes Rust formatting, Clippy and unit tests plus the existing JavaScript checks.
+The parity task builds web assets and Rust, creates a uniquely named database, runs the existing migration and fixture loader, compares both implementations on the same rows, checks rendered HTML and CSS, native REST/MCP contracts, cookie interoperability, concurrency/outage behavior, and login/refresh/revocation against a disposable real Better Auth issuer with fake GitHub; stops Rust, and drops only its own database. It does not use the existing corpus database. CI runs parity against Postgres 18; `vp run ready` includes Rust formatting, Clippy and unit tests plus the existing JavaScript checks.

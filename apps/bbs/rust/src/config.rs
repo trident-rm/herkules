@@ -7,6 +7,7 @@ pub struct Config {
     pub app_origin: String,
     pub max_connections: u32,
     pub web_dir: Option<PathBuf>,
+    pub auth: Option<crate::session::AuthConfig>,
 }
 
 impl Config {
@@ -33,12 +34,53 @@ impl Config {
             return Err("BBS_RUST_DB_CONNECTIONS must be from 1 to 10".into());
         }
         let web_dir = env::var("WEB_DIR").ok().map(PathBuf::from);
+        let auth = match env::var("PUBLIC_ORIGIN") {
+            Ok(raw) => {
+                let public_origin = origin(&raw)?;
+                let internal_origin = origin(
+                    &env::var("AUTH_INTERNAL_URL").unwrap_or_else(|_| public_origin.clone()),
+                )?;
+                let client_secret = env::var("BBS_CLIENT_SECRET")
+                    .map_err(|_| "BBS_CLIENT_SECRET is required in native mode")?;
+                let cookie_secret = env::var("BBS_COOKIE_SECRET")
+                    .map_err(|_| "BBS_COOKIE_SECRET is required in native mode")?;
+                if client_secret.encode_utf16().count() < 32
+                    || cookie_secret.encode_utf16().count() < 32
+                {
+                    return Err(
+                        "BBS_CLIENT_SECRET and BBS_COOKIE_SECRET must be at least 32 characters"
+                            .into(),
+                    );
+                }
+                Some(crate::session::AuthConfig {
+                    public_origin,
+                    internal_origin,
+                    app_origin: app_origin.clone(),
+                    client_secret,
+                    cookie_secret,
+                })
+            }
+            Err(_) => {
+                if [
+                    "AUTH_INTERNAL_URL",
+                    "BBS_CLIENT_SECRET",
+                    "BBS_COOKIE_SECRET",
+                ]
+                .iter()
+                .any(|k| env::var(k).is_ok())
+                {
+                    return Err("PUBLIC_ORIGIN is required when configuring native auth".into());
+                }
+                None
+            }
+        };
         Ok(Self {
             database_url,
             listen,
             app_origin,
             max_connections,
             web_dir,
+            auth,
         })
     }
 }

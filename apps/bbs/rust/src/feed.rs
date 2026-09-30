@@ -46,23 +46,27 @@ pub enum FeedError {
 
 impl FeedQuery {
     pub fn validate(self) -> Result<ValidFeedQuery, FeedError> {
+        self.validate_with_bounds(true)
+    }
+    pub(crate) fn validate_with_bounds(self, bounded: bool) -> Result<ValidFeedQuery, FeedError> {
         let q = self.q.unwrap_or_default();
         let q = q.trim_matches(js_whitespace);
         let scope = self.scope.unwrap_or_else(|| "all".into());
         if !["all", "title", "kb"].contains(&scope.as_str())
-            || q.encode_utf16().count() > 200
-            || self
-                .tag
-                .as_ref()
-                .is_some_and(|s| s.encode_utf16().count() > 120)
-            || self
-                .group
-                .as_ref()
-                .is_some_and(|s| s.encode_utf16().count() > 120)
-            || self
-                .cursor
-                .as_ref()
-                .is_some_and(|s| s.encode_utf16().count() > 512)
+            || (bounded
+                && (q.encode_utf16().count() > 200
+                    || self
+                        .tag
+                        .as_ref()
+                        .is_some_and(|s| s.encode_utf16().count() > 120)
+                    || self
+                        .group
+                        .as_ref()
+                        .is_some_and(|s| s.encode_utf16().count() > 120)
+                    || self
+                        .cursor
+                        .as_ref()
+                        .is_some_and(|s| s.encode_utf16().count() > 512)))
         {
             return Err(FeedError::InvalidQuery);
         }
