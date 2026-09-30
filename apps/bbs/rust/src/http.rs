@@ -71,11 +71,8 @@ pub fn router(state: AppState) -> Router {
                 .with_legacy_session_mode(false)
                 .with_json_response(true)
                 .with_allowed_origins([
-                    state.app_origin.clone(),
-                    auth.api_resource
-                        .strip_suffix("/api/bbs")
-                        .unwrap()
-                        .to_owned(),
+                    mcp_allowed_origin(&state.app_origin),
+                    mcp_allowed_origin(auth.api_resource.strip_suffix("/api/bbs").unwrap()),
                 ]),
         );
         app = app
@@ -87,6 +84,35 @@ pub fn router(state: AppState) -> Router {
             .layer(middleware::from_fn_with_state(state.clone(), mcp_auth));
     }
     app.with_state(state)
+}
+
+/// rmcp treats portless allowlist entries as any-port. Browser Origin headers
+/// omit default ports, but rmcp normalizes them before comparing explicit ports.
+fn mcp_allowed_origin(origin: &str) -> String {
+    let url = url::Url::parse(origin).expect("configured origins are validated at startup");
+    format!(
+        "{}://{}:{}",
+        url.scheme(),
+        url.host_str().unwrap(),
+        url.port_or_known_default().unwrap()
+    )
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::mcp_allowed_origin;
+    #[test]
+    fn allowed_origins_use_explicit_default_and_configured_ports() {
+        for (origin, expected) in [
+            ("https://bbs.herkules.dev", "https://bbs.herkules.dev:443"),
+            ("https://herkules.dev", "https://herkules.dev:443"),
+            ("http://localhost", "http://localhost:80"),
+            ("http://localhost:3003", "http://localhost:3003"),
+            ("http://[::1]:3003", "http://[::1]:3003"),
+        ] {
+            assert_eq!(mcp_allowed_origin(origin), expected);
+        }
+    }
 }
 async fn mcp_auth(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     if request.uri().path() != "/mcp/bbs" {
