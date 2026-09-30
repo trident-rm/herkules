@@ -18,5 +18,7 @@ export default defineConfig({
     // PGlite + fake GitHub: no services needed. Integration tests live next to unit tests.
     include: ["tests/**/*.test.ts"],
     testTimeout: 20_000,
+    // Each integration worker starts PGlite; cap concurrent databases on developer machines.
+    maxWorkers: 2,
   },
 });

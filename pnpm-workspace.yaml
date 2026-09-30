@@ -52,5 +52,6 @@ allowBuilds:
   esbuild: true
   workerd: true
   protobufjs: true
+  keytar: false
 minimumReleaseAgeExclude:
   - lucide-react@1.35.0

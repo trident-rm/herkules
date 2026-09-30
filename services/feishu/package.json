@@ -1,0 +1,30 @@
+{
+  "name": "@herkules/feishu",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file=.env src/main.ts",
+    "build": "vp pack",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@herkules/auth-middleware": "workspace:*",
+    "@hono/node-server": "catalog:",
+    "@larksuiteoapi/lark-mcp": "0.5.1",
+    "@larksuiteoapi/node-sdk": "catalog:",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "hono": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

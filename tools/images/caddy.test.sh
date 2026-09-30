@@ -24,7 +24,7 @@ python3 - "$work/config.json" <<'PY'
 import json, sys
 config = json.load(open(sys.argv[1]))
 encoded = json.dumps(config)
-for value in ['/auth/internal/*', '/auth/*', '/.well-known/*', '/mcp/bbs*', 'auth:3001', 'bbs:3003', 'inference:4010', '/srv/training']:
+for value in ['/auth/internal/*', '/auth/*', '/.well-known/*', '/mcp/bbs*', '/mcp/feishu*', 'feishu:3005', 'auth:3001', 'bbs:3003', 'inference:4010', '/srv/training']:
     assert value in encoded, value
 # The internal route must still reject requests; imports must not lose that guard.
 def visit(value):
