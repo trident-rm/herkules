@@ -378,7 +378,11 @@ try {
     const response = await fetch(`${origin}${path}`);
     assert.equal(response.status, 404, path);
     assert.notEqual(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
-    assert.ok(!(await response.text()).includes("<html"), path);
+    assert.deepEqual(
+      await response.json(),
+      { error: "not_found", error_description: "no such route" },
+      path,
+    );
     checks++;
   }
   assert.equal(css.headers.get("cache-control"), "public, max-age=31536000, immutable");

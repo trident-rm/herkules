@@ -2,7 +2,7 @@
 use std::{path::Path, sync::Arc};
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{Request, State},
     http::{StatusCode, header},
     response::{Html, IntoResponse, Response},
@@ -113,6 +113,9 @@ async fn browser(State(state): State<WebState>, request: Request) -> Response {
         || path.starts_with("/favicon.");
     if public_file {
         let mut response = state.files.oneshot(request).await.unwrap().into_response();
+        if response.status() == StatusCode::NOT_FOUND {
+            return not_found();
+        }
         if response.status() == StatusCode::OK {
             let policy = if asset {
                 "public, max-age=31536000, immutable"
@@ -130,7 +133,7 @@ async fn browser(State(state): State<WebState>, request: Request) -> Response {
     }
     // Reserved paths must never turn into a successful HTML document.
     if path == "/api" || path == "/mcp" || path.starts_with("/api/") || path.starts_with("/mcp/") {
-        return StatusCode::NOT_FOUND.into_response();
+        return not_found();
     }
     let mut status = StatusCode::OK;
     let mut body = state.document.plain.clone();
@@ -174,6 +177,16 @@ fn decode_segment(raw: &str) -> Option<String> {
         }
     }
     String::from_utf8(bytes).ok()
+}
+
+fn not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "not_found", "error_description": "no such route"
+        })),
+    )
+        .into_response()
 }
 
 fn escape(text: &str) -> String {
