@@ -19,8 +19,9 @@ export default defineConfig({
   run: {
     tasks: {
       "test:rust:parity": {
+        dependsOn: ["@herkules/auth-middleware#build"],
         command:
-          "vp -C web build && cargo build -p herkules-bbs --locked && node --experimental-strip-types scripts/rust-parity.ts",
+          'vp run "@herkules/oauth-client#build" && vp -C web build && cargo build -p herkules-bbs --locked && node --experimental-strip-types scripts/rust-parity.ts',
         cache: false,
       },
     },

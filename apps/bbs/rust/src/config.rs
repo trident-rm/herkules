@@ -53,6 +53,10 @@ impl Config {
                     );
                 }
                 Some(crate::session::AuthConfig {
+                    client_id: "bbs".into(),
+                    login_error_path: "/account".into(),
+                    api_resource: format!("{public_origin}/api/bbs"),
+                    mcp_resource: format!("{public_origin}/mcp/bbs"),
                     public_origin,
                     internal_origin,
                     app_origin: app_origin.clone(),

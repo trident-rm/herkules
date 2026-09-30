@@ -1,0 +1,28 @@
+[package]
+name = "herkules-auth"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Herkules resource-server verification and first-party browser OAuth for Rust services"
+
+[dependencies]
+axum = "0.8.9"
+base64 = "0.22"
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"
+url = "2"
+aes-gcm = "0.10"
+ed25519-dalek = "2"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "rustls"] }
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }

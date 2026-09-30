@@ -8,10 +8,10 @@ import { resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { serve } from "@hono/node-server";
 import { createTestService } from "@herkules/auth/testing";
-import { RESOURCE_SPECS } from "../../../services/auth/src/registry.ts";
+import { RESOURCE_SPECS } from "@herkules/auth/testing";
 import { absorbCookies } from "@herkules/oauth-client/testing";
-import { createCookieJar } from "../../../packages/oauth-client/src/cookie.ts";
-import { createSealer } from "../../../packages/oauth-client/src/seal.ts";
+import { createCookieJar } from "@herkules/oauth-client/testing";
+import { createSealer } from "@herkules/oauth-client/testing";
 import { connect } from "../tests/helpers.ts";
 
 export async function issuerParity(databaseUrl: string, root: string) {

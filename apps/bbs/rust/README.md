@@ -92,6 +92,8 @@ This option does not change browser page routing: open the Rust port directly fo
 
 ## Native REST, MCP and browser OAuth
 
+Token verification and OAuth/session handling live in the shared [`herkules-auth` crate](../../../packages/auth-rust/README.md). BBS configures its client/audiences and owns routes, admission and viewer presentation.
+
 Set `PUBLIC_ORIGIN` to enable native BBS authentication and MCP. This is the platform identity origin, such as `https://herkules.dev`, not the BBS origin. Set `APP_ORIGIN` to the BBS browser origin. Rust derives the issuer `/auth`, API audience `/api/bbs` and MCP audience `/mcp/bbs` from `PUBLIC_ORIGIN`. Optional `AUTH_INTERNAL_URL` changes the origin used for server-to-server requests, preserving the public issuer and audiences.
 
 ```sh

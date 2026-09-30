@@ -150,7 +150,7 @@ async fn viewer(
     p: Option<axum::Extension<crate::auth::Principal>>,
 ) -> Response {
     let v = match (&state.auth, p) {
-        (Some(auth), Some(p)) => auth.viewer(&p).await,
+        (Some(auth), Some(p)) => crate::session::viewer(auth, &p).await,
         _ => serde_json::Value::Null,
     };
     (
@@ -164,7 +164,7 @@ async fn me(
     p: Option<axum::Extension<crate::auth::Principal>>,
 ) -> Response {
     match (&state.auth, p) {
-        (Some(auth), Some(p)) => Json(auth.viewer(&p).await).into_response(),
+        (Some(auth), Some(p)) => Json(crate::session::viewer(auth, &p).await).into_response(),
         _ => error(
             StatusCode::SERVICE_UNAVAILABLE,
             "unavailable",

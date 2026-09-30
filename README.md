@@ -18,6 +18,7 @@ infrastructure repository.
 | [`apps/bbs`](apps/bbs/README.md)                                 | RM 文库 API, MCP server, SPA host, corpus, search, crawler; incremental Rust/SSR migration |
 | [`packages/auth-middleware`](packages/auth-middleware/README.md) | Resource-server JWT verification and OAuth challenge helpers                               |
 | [`packages/oauth-client`](packages/oauth-client/README.md)       | Stateless first-party browser OAuth sessions for Hono apps                                 |
+| [`packages/auth-rust`](packages/auth-rust/README.md)             | Shared Rust token verification and first-party OAuth sessions                              |
 | [`packages/ui`](packages/ui/README.md)                           | Shared source CSS and React components                                                     |
 | [`tools/images`](tools/images/README.md)                         | Application images and Caddy route fragments                                               |
 
