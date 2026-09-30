@@ -48,7 +48,7 @@ Token checks, Ed25519/JWKS behavior and challenges are governed by `docs/tokens.
 
 Cookie bytes match `@herkules/oauth-client`: AES-256-GCM, HKDF-SHA256 salt equal to the client ID, separate login/session purposes and fixed `hk_login`/`hk_session` names. Different client IDs isolate encryption keys even when a secret is shared. Host-specific app origins isolate cookie names; do not run multiple clients on the same browser origin without a separate cookie naming design. Rotating the secret signs users out.
 
-Login state retains up to three attempts for ten minutes, with PKCE S256 and safe local return paths. Refresh starts within 60 seconds of expiry, shares in-flight requests per refresh token and retains successful rotations for the issuer's 30-second replay window. These durations must remain aligned with the TypeScript client and issuer. Failed refreshes are not memoized. Keep one `Auth` per app process to share caches; cross-process replay depends on the issuer policy.
+Login state retains up to three attempts for ten minutes, with PKCE S256 and safe local return paths. Refresh starts within 60 seconds of expiry, shares in-flight requests per refresh token and retains successful rotations for the issuer's 30-second replay window. These durations must remain aligned with the TypeScript client and issuer. Failed refreshes are not memoized. Each refresh has an independently driven owner with a ten-second deadline, so cancelling every HTTP waiter cannot pause it or retain a cycle. Completion changes only its own generation; cancelled callers can recover a successful rotation through the same replay memo. Keep one `Auth` per app process to share caches; cross-process replay depends on the issuer policy.
 
 The application owns route mounting, admission policy, rate limits, discovery, MCP transport, UI, persistence and deployment. BBS retains those concerns; its `auth` module re-exports this crate and its `session` module presents profiles.
 
@@ -62,7 +62,7 @@ vp run check:rust
 vp run ready
 ```
 
-Unit tests cover normative tokens, JWKS cache/outages, failed-refresh concurrency, cookie purpose/client isolation and configurable clients. BBS's disposable Postgres parity suite additionally checks Node/Rust cookie interoperability and the actual Better Auth issuer:
+Unit tests cover normative tokens, JWKS cache/outages, failed-refresh concurrency, cancellation cleanup, cookie purpose/client isolation and configurable clients. BBS's disposable Postgres parity suite additionally checks Node/Rust cookie interoperability and the actual Better Auth issuer:
 
 ```sh
 BBS_RUST_TEST_POSTGRES=postgres://test_user:password@localhost/postgres \

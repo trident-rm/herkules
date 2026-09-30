@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 
 #[derive(Clone)]
 pub struct AuthConfig {
@@ -64,6 +64,7 @@ impl From<reqwest::Error> for AuthError {
     }
 }
 impl AuthConfig {
+    /// Reject unsafe origins, ambiguous audiences, weak secrets and external error redirects.
     fn validate(&mut self) -> Result<(), AuthError> {
         for origin in [
             &mut self.public_origin,
@@ -137,7 +138,7 @@ pub struct Auth {
     refreshes: Arc<Mutex<HashMap<String, RefreshEntry>>>,
 }
 enum RefreshEntry {
-    Running(Shared<BoxFuture<'static, Grant>>),
+    Running(Instant, Shared<BoxFuture<'static, Grant>>),
     Done(Instant, Tokens),
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -286,6 +287,8 @@ pub struct Session {
     pub cookies: Vec<String>,
 }
 impl Auth {
+    /// Validate service configuration and construct shared verifier/refresh caches.
+    /// Reuse one instance per service process; secrets are never included in Debug output.
     pub fn new(mut config: AuthConfig) -> Result<Self, AuthError> {
         config.validate()?;
         let client = reqwest::Client::builder()
@@ -311,6 +314,8 @@ impl Auth {
             refreshes: Default::default(),
         })
     }
+    /// Resolve explicit bearer credentials before cookies and refresh eligible sessions.
+    /// Callers must enforce explicit failures and append returned cookies on all paths.
     pub async fn resolve(&self, headers: &HeaderMap, method: &Method) -> Session {
         let session = |principal, failure, explicit, cookies| Session {
             principal,
@@ -416,6 +421,7 @@ impl Auth {
             .send()
             .await
     }
+    /// Classify token endpoint failures without logging credentials or response tokens.
     async fn grant(&self, form: &[(&str, &str)]) -> Grant {
         let Ok(r) = self.post("token", form).await else {
             return Grant::Unavailable;
@@ -443,47 +449,61 @@ impl Auth {
         }
         Grant::Unavailable
     }
+    /// Run each refresh generation independently of HTTP request cancellation.
+    /// A bounded owner publishes the result and cleans up only its own generation;
+    /// waiters own a shared receiver, never the OAuth future or an Auth clone.
     async fn refresh(&self, token: &str) -> Grant {
+        const DEADLINE: Duration = Duration::from_secs(10);
         let call = {
             let mut entries = self.refreshes.lock().await;
-            entries.retain(|_, e| match e {
-                RefreshEntry::Running(_) => true,
+            entries.retain(|_, entry| match entry {
+                RefreshEntry::Running(at, _) => at.elapsed() < DEADLINE,
                 RefreshEntry::Done(at, _) => at.elapsed() < Duration::from_secs(30),
             });
             match entries.get(token) {
                 Some(RefreshEntry::Done(_, tokens)) => return Grant::Tokens(tokens.clone()),
-                Some(RefreshEntry::Running(call)) => call.clone(),
+                Some(RefreshEntry::Running(_, call)) => call.clone(),
                 None => {
+                    let (sender, receiver) = oneshot::channel();
+                    let call = async move { receiver.await.unwrap_or(Grant::Unavailable) }
+                        .boxed()
+                        .shared();
+                    entries.insert(
+                        token.to_owned(),
+                        RefreshEntry::Running(Instant::now(), call.clone()),
+                    );
                     let auth = self.clone();
                     let raw = token.to_owned();
-                    let call = async move {
-                        auth.grant(&[("grant_type", "refresh_token"), ("refresh_token", &raw)])
-                            .await
-                    }
-                    .boxed()
-                    .shared();
-                    entries.insert(token.to_owned(), RefreshEntry::Running(call.clone()));
+                    let generation = call.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::time::timeout(
+                            DEADLINE,
+                            auth.grant(&[("grant_type", "refresh_token"), ("refresh_token", &raw)]),
+                        )
+                        .await
+                        .unwrap_or(Grant::Unavailable);
+                        let mut entries = auth.refreshes.lock().await;
+                        if matches!(entries.get(&raw), Some(RefreshEntry::Running(_, current)) if current.ptr_eq(&generation))
+                        {
+                            if let Grant::Tokens(tokens) = &result {
+                                entries.insert(
+                                    raw,
+                                    RefreshEntry::Done(Instant::now(), tokens.clone()),
+                                );
+                            } else {
+                                entries.remove(&raw);
+                            }
+                        }
+                        let _ = sender.send(result);
+                    });
                     call
                 }
             }
         };
-        let result = call.clone().await;
-        let mut entries = self.refreshes.lock().await;
-        // Only the first waiter transitions this generation; other waiters
-        // must not overwrite a later retry or extend the successful replay memo.
-        if matches!(entries.get(token), Some(RefreshEntry::Running(current)) if current.ptr_eq(&call))
-        {
-            if let Grant::Tokens(tokens) = &result {
-                entries.insert(
-                    token.to_owned(),
-                    RefreshEntry::Done(Instant::now(), tokens.clone()),
-                );
-            } else {
-                entries.remove(token);
-            }
-        }
-        result
+        call.await
     }
+    /// Start confidential-client PKCE login and retain up to three sealed attempts.
+    /// The optional `next` query value is restricted to a safe local path.
     pub fn login(&self, headers: &HeaderMap, q: &HashMap<String, String>) -> Response {
         let mut attempts = self.jar.attempts(headers);
         let random = || {
@@ -525,6 +545,8 @@ impl Auth {
             vec![self.jar.write("login", &Login { attempts })],
         )
     }
+    /// Consume matching sealed state and exchange its code once using PKCE.
+    /// Other pending attempts survive; success sets the compatible session cookie.
     pub async fn callback(&self, headers: &HeaderMap, q: &HashMap<String, String>) -> Response {
         let mut attempts = self.jar.attempts(headers);
         let Some(at) = attempts
@@ -577,6 +599,8 @@ impl Auth {
             cookies,
         )
     }
+    /// Clear both cookies and attempt issuer refresh-token revocation.
+    /// The application must mount this handler only for POST requests.
     pub async fn logout(&self, headers: &HeaderMap, next: Option<&str>) -> Response {
         if let Some(tokens) = self
             .jar
@@ -598,6 +622,8 @@ impl Auth {
             vec![self.jar.clear("session"), self.jar.clear("login")],
         )
     }
+    /// Fetch Herkules user-info with the verified caller token, returning None
+    /// on invalid data or issuer failure; application-specific fallback stays in the app.
     pub async fn user_profile(&self, p: &Principal) -> Option<Value> {
         let url = format!(
             "{}/auth/api/users/{}",
@@ -624,6 +650,7 @@ impl Auth {
         .await
     }
 }
+/// Append all cookie updates, including multiple Set-Cookie values on errors.
 pub fn with_cookies(mut r: Response, cookies: Vec<String>) -> Response {
     for c in cookies {
         r.headers_mut()
@@ -660,6 +687,7 @@ fn redirect(location: &str, cookies: Vec<String>) -> Response {
         cookies,
     )
 }
+/// Restrict redirect destinations to bounded, control-free local paths; default to `/`.
 pub fn safe_path(raw: Option<&str>) -> String {
     match raw {
         Some(s)
@@ -674,6 +702,7 @@ pub fn safe_path(raw: Option<&str>) -> String {
         _ => "/".into(),
     }
 }
+/// Encode UTF-8 using JavaScript encodeURIComponent semantics for OAuth interoperability.
 pub fn encode_component(s: &str) -> String {
     s.bytes()
         .map(|b| {
@@ -749,6 +778,113 @@ mod tests {
                 _ => invalid.login_error_path = "//evil.example".into(),
             }
             assert!(Auth::new(invalid).is_err());
+        }
+    }
+    /// Cancelling every HTTP waiter must not pause refresh or retain its state.
+    #[tokio::test]
+    async fn cancelled_refresh_waiters_still_complete_and_release_state() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        for (success, replaced) in [(false, false), (true, false), (true, true)] {
+            let started = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Semaphore::new(0));
+            let count = Arc::new(AtomicUsize::new(0));
+            let app = axum::Router::new().route("/auth/oauth2/token", axum::routing::post({
+                let started = started.clone();
+                let release = release.clone();
+                let count = count.clone();
+                move || {
+                    let started = started.clone();
+                    let release = release.clone();
+                    let count = count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        started.notify_one();
+                        release.acquire().await.unwrap().forget();
+                        if success {
+                            (axum::http::StatusCode::OK, axum::Json(json!({"access_token":"new-access", "refresh_token":"new-refresh"})))
+                        } else {
+                            (axum::http::StatusCode::SERVICE_UNAVAILABLE, axum::Json(json!({"error":"offline"})))
+                        }
+                    }
+                }
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let auth = Auth::new(AuthConfig {
+                client_id: "test".into(),
+                api_resource: format!("{origin}/api/test"),
+                mcp_resource: format!("{origin}/mcp/test"),
+                login_error_path: "/account".into(),
+                public_origin: origin.clone(),
+                internal_origin: origin,
+                app_origin: "https://test.example".into(),
+                client_secret: "c".repeat(32),
+                cookie_secret: "s".repeat(32),
+            })
+            .unwrap();
+            let weak = Arc::downgrade(&auth.refreshes);
+            let waiters: Vec<_> = (0..10)
+                .map(|_| {
+                    let auth = auth.clone();
+                    tokio::spawn(async move { auth.refresh("abandoned-token").await })
+                })
+                .collect();
+            started.notified().await;
+            for waiter in &waiters {
+                waiter.abort();
+            }
+            for waiter in waiters {
+                assert!(matches!(waiter.await, Err(error) if error.is_cancelled()));
+            }
+            if replaced {
+                // A later generation must survive completion of this abandoned one.
+                auth.refreshes.lock().await.insert(
+                    "abandoned-token".into(),
+                    RefreshEntry::Done(
+                        Instant::now(),
+                        Tokens {
+                            access_token: "later-access".into(),
+                            refresh_token: "later-refresh".into(),
+                        },
+                    ),
+                );
+            }
+            release.add_permits(1);
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    let entries = auth.refreshes.lock().await;
+                    if Arc::strong_count(&auth.refreshes) == 1
+                        && !matches!(
+                            entries.get("abandoned-token"),
+                            Some(RefreshEntry::Running(_, _))
+                        )
+                    {
+                        break;
+                    }
+                    drop(entries);
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            if success {
+                assert!(
+                    matches!(auth.refresh("abandoned-token").await, Grant::Tokens(tokens) if tokens.refresh_token == if replaced { "later-refresh" } else { "new-refresh" })
+                );
+            } else {
+                assert!(auth.refreshes.lock().await.is_empty());
+            }
+            assert_eq!(count.load(Ordering::SeqCst), 1);
+            drop(auth);
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while weak.upgrade().is_some() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            server.abort();
         }
     }
     #[tokio::test]

@@ -367,14 +367,15 @@ struct EntityKeyQuery {
 fn entity_request_key(
     path: Result<Path<String>, PathRejection>,
     query: Result<Query<EntityKeyQuery>, QueryRejection>,
-    allow_key: bool,
 ) -> Result<String, ApiError> {
     let name = path.map_err(|_| ApiError::Invalid)?.0;
     let q = query.map_err(|_| ApiError::Invalid)?.0;
-    if allow_key && let Some(key) = q.key {
+    if let Some(key) = q.key {
         if key.encode_utf16().count() > 400 {
             return Err(ApiError::Invalid);
         }
+        // Adapter callers supply an opaque EntityKey. Normalization is not
+        // idempotent for Unicode lowercase expansions such as U+0130.
         return Ok(key);
     }
     if name.is_empty() || name.encode_utf16().count() > 200 {
@@ -387,7 +388,7 @@ async fn entity(
     path: Result<Path<String>, PathRejection>,
     query: Result<Query<EntityKeyQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let key = entity_request_key(path, query, state.auth.is_none())?;
+    let key = entity_request_key(path, query)?;
     Ok(Json(state.library.entity(&key).await?.ok_or(ApiError::Missing)?).into_response())
 }
 
@@ -412,7 +413,7 @@ async fn entity_head(
     path: Result<Path<String>, PathRejection>,
     query: Result<Query<EntityKeyQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    let key = entity_request_key(path, query, state.auth.is_none())?;
+    let key = entity_request_key(path, query)?;
     Ok(Json(
         state
             .library

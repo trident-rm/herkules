@@ -38,6 +38,9 @@ pub enum Failure {
     Unavailable,
 }
 impl Failure {
+    /// Render the token-contract API envelope or MCP JSON-RPC error, with
+    /// a protected-resource challenge (or Retry-After on JWKS unavailability).
+    /// `resource` must be the configured absolute HTTP(S) audience.
     pub fn response(self, resource: &str, mcp: bool) -> Response {
         let (status, code, message) = match self {
             Self::Missing => (
@@ -106,6 +109,8 @@ pub struct Verifier {
     keys: Arc<Mutex<Keys>>,
 }
 impl Verifier {
+    /// Construct a shared verifier without network I/O. The caller supplies
+    /// trusted issuer/JWKS URLs and an HTTP client with bounded timeouts.
     pub fn new(issuer: String, jwks: String, client: reqwest::Client) -> Self {
         Self {
             issuer,
@@ -114,6 +119,8 @@ impl Verifier {
             keys: Arc::new(Mutex::new(Keys::default())),
         }
     }
+    /// Parse the Authorization header and verify it for exactly this audience.
+    /// Missing, malformed and invalid credentials remain distinct failures.
     pub async fn header(&self, headers: &HeaderMap, resource: &str) -> Result<Principal, Failure> {
         let raw = headers
             .get(header::AUTHORIZATION)
@@ -121,6 +128,8 @@ impl Verifier {
             .transpose()?;
         self.verify(parse_authorization(raw)?, resource).await
     }
+    /// Verify signature and normative claims before returning a principal.
+    /// Cached usable keys survive transient outages; unavailable keys fail closed.
     pub async fn verify(&self, token: &str, resource: &str) -> Result<Principal, Failure> {
         let parts: Vec<_> = token.split('.').collect();
         if parts.len() != 3 {
@@ -152,6 +161,7 @@ impl Verifier {
             now_seconds(),
         )
     }
+    /// Serialize JWKS reloads, bound unknown-key retries and retain usable stale keys.
     async fn key(&self, kid: &str) -> Result<VerifyingKey, Failure> {
         let mut cache = self.keys.lock().await;
         let fresh = cache
@@ -189,6 +199,7 @@ impl Verifier {
         Ok(matches[0])
     }
 }
+/// Retain usable Ed25519 signing keys without hiding ambiguous duplicate key IDs.
 fn parse_keys(body: &Value) -> Option<HashMap<String, Vec<VerifyingKey>>> {
     let mut out: HashMap<String, Vec<VerifyingKey>> = HashMap::new();
     for k in body.get("keys")?.as_array()? {
@@ -226,9 +237,11 @@ fn decode_json(raw: &str) -> Result<Value, Failure> {
 fn nonempty(v: &Value) -> Result<&str, Failure> {
     v.as_str().filter(|s| !s.is_empty()).ok_or(Failure::Invalid)
 }
+/// Wall-clock Unix time with millisecond precision for token lifetime checks.
 pub fn now_seconds() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
 }
+/// Apply the shared token contract after signature verification; never infer roles.
 fn claims_principal(
     c: Value,
     token: &str,
@@ -308,6 +321,7 @@ fn claims_principal(
         claims: c.clone(),
     })
 }
+/// Accept one case-insensitive Bearer scheme with a nonempty, whitespace-free token.
 pub fn parse_authorization(raw: Option<&str>) -> Result<&str, Failure> {
     let raw = raw.unwrap_or("").trim();
     if raw.is_empty() {

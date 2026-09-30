@@ -303,8 +303,10 @@ try {
     true,
     "MCP receives Date values",
   );
+  checks++;
   const lowercase = await fetch(`${origin}/api/articles/${ID.A.toLowerCase()}`);
   assert.deepEqual(await lowercase.json(), json(await fixture.library.article(ID.A)));
+  checks++;
   for (const path of ["/api/articles/bad", `/api/articles/${ID.A}/content?format=pdf`]) {
     const response = await fetch(`${origin}${path}`);
     assert.equal(response.status, 400);
@@ -317,19 +319,29 @@ try {
   }
   const page = await fetch(`${origin}/articles/${ID.A}`);
   assert.equal(page.status, 200);
+  checks++;
   assert.equal(page.headers.get("cache-control"), "no-store");
+  checks++;
   assert.match(page.headers.get("content-security-policy")!, /default-src 'none'/);
+  checks++;
   const html = await page.text();
   const article = (await fixture.library.article(ID.A))!;
   assert.ok(html.includes(article.contentHtml!), "the initial document contains the article body");
+  checks++;
   assert.ok(!html.includes("<script"), "reader requires no hydration");
+  checks++;
   assert.ok(html.includes(`https://bbs.example/articles/${ID.A}`));
+  checks++;
   const stylesheet = /href="(\/assets\/[^"]+\.css)"/.exec(html)?.[1];
   assert.ok(stylesheet, "reader references the Vite manifest stylesheet");
+  checks++;
   const css = await fetch(`${origin}${stylesheet}`);
   assert.equal(css.status, 200);
+  checks++;
   assert.match(await css.text(), /ssr-reader/);
+  checks++;
   assert.equal((await fetch(`${origin}/healthz`)).status, 200);
+  checks++;
   // Adversarial metadata and a plain-text fallback must stay escaped in SSR.
   const edits = postgres(databaseUrl.href, { max: 1 });
   try {
@@ -337,9 +349,13 @@ try {
       content_html = NULL, body_text = ${"<img src=x onerror=alert(1)>"} WHERE id = ${ID.A}`;
     const escaped = await (await fetch(`${origin}/articles/${ID.A}`)).text();
     assert.ok(!escaped.includes("<script>"));
+    checks++;
     assert.ok(!escaped.includes("<img src=x"));
+    checks++;
     assert.match(escaped, /(?:&lt;|&#60;|&#x3c;)script(?:&gt;|&#62;|&#x3e;)/i);
+    checks++;
     assert.match(escaped, /(?:&lt;|&#60;|&#x3c;)img/i);
+    checks++;
   } finally {
     await edits.end();
   }
@@ -476,7 +492,6 @@ try {
   } finally {
     await edgeEdits.end();
   }
-  checks += 12;
   console.log(
     `Rust parity passed: ${checks} checks, shared Postgres fixture, rendered reader and Vite CSS`,
   );

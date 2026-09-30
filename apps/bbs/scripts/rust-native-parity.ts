@@ -21,6 +21,8 @@ import { connect, fetchVia, legacyCall } from "../tests/helpers.ts";
 import { ID } from "../tests/seed.ts";
 import type { BbsDb } from "../src/db/index.ts";
 import { sql, eq } from "drizzle-orm";
+import { withRustReads } from "../src/library/rust.ts";
+import { entityKey } from "../src/library/types.ts";
 import { articles } from "../src/db/schema.ts";
 
 export async function nativeParity(databaseUrl: string, library: Library, db: BbsDb, root: string) {
@@ -154,6 +156,37 @@ export async function nativeParity(databaseUrl: string, library: Library, db: Bb
       assert.equal(a.status, b.status, path);
       assert.deepEqual(await a.json(), await b.json(), path);
       checks++;
+    }
+    // Delegation must work with native auth enabled, including literal "key"
+    // collisions and Unicode keys whose lowercase expansion is not idempotent.
+    const delegated = withRustReads(library, { origin });
+    await db.execute(
+      sql`INSERT INTO kb_entities (key, name, article_count, updated_at) VALUES ('key', 'key', 1, now()), (${entityKey("İ")}, 'İ', 1, now())`,
+    );
+    await db.execute(
+      sql`INSERT INTO article_entities (article_id, entity_key) VALUES (${ID.A}, 'key'), (${ID.A}, ${entityKey("İ")})`,
+    );
+    try {
+      for (const name of ["PID", "İ", "key", "missing entity"]) {
+        const key = entityKey(name);
+        assert.deepEqual(
+          await delegated.entity(key),
+          await library.entity(key),
+          `native adapter entity ${name}`,
+        );
+        checks++;
+        assert.deepEqual(
+          await delegated.entityHead(key),
+          await library.entityHead(key),
+          `native adapter entity head ${name}`,
+        );
+        checks++;
+      }
+    } finally {
+      await db.execute(
+        sql`DELETE FROM article_entities WHERE entity_key IN ('key', ${entityKey("İ")})`,
+      );
+      await db.execute(sql`DELETE FROM kb_entities WHERE key IN ('key', ${entityKey("İ")})`);
     }
     for (const format of ["text", "markdown", "html"]) {
       const path = `/api/articles/${ID.A}/content?format=${format}`;
