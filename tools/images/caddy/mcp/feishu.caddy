@@ -1,0 +1,4 @@
+# services/feishu — member-authenticated MCP and per-member upstream consent
+handle /mcp/feishu* {
+	reverse_proxy feishu:3005
+}

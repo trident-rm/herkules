@@ -25,6 +25,7 @@ export function selectImageTargets(paths, { all = false } = {}) {
     )
       add(...allTargets);
     if (nodeBuildInputs.has(path) || path.startsWith("tsconfig")) add(...allTargets);
+    if (isBuildInput(path, "services/feishu", ["src"])) add("auth");
     if (isBuildInput(path, "services/auth", ["src", "drizzle"])) add("auth");
     if (
       isBuildInput(path, "services/inference", ["src"]) ||

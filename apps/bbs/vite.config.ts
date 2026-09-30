@@ -19,5 +19,7 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts", "web/tests/**/*.test.ts"],
     testTimeout: 20_000,
+    // Integration workers start PGlite databases; keep concurrent instances bounded.
+    maxWorkers: 2,
   },
 });

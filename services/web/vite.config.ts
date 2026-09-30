@@ -41,5 +41,7 @@ export default defineConfig({
     // Pure modules only (api client, dev-token flow, formatting); the flow test runs the real auth service on PGlite.
     include: ["tests/**/*.test.ts"],
     testTimeout: 20_000,
+    // Integration workers start PGlite databases; keep concurrent instances bounded.
+    maxWorkers: 2,
   },
 });

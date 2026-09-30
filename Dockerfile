@@ -45,6 +45,7 @@ RUN pnpm -r --sort run build
 # --ignore-scripts again: `pnpm deploy` otherwise runs the root `prepare` (vp config), which wants git.
 RUN pnpm --filter @herkules/auth deploy --prod --legacy --ignore-scripts /out/auth \
  && pnpm --filter @herkules/bbs deploy --prod --legacy --ignore-scripts /out/bbs \
+ && pnpm --filter @herkules/feishu deploy --prod --legacy --ignore-scripts /out/feishu \
  && pnpm --filter @herkules/inference deploy --prod --legacy --ignore-scripts /out/inference
 
 # ── runtime base for the two Node services ─────────────────────────────────
@@ -58,10 +59,11 @@ USER node
 FROM runtime AS auth
 ENV PORT=3001 MIGRATIONS_DIR=/app/drizzle AVATAR_DIR=/data/avatars
 COPY --from=build --chown=node:node /out/auth /app
+COPY --from=build --chown=node:node /out/feishu /feishu
 # The `avatars` named volume inherits this directory's ownership, so it has to exist and be
 # node-owned in the image; only root can create it, hence the two USER lines.
 USER root
-RUN apk add --no-cache tzdata ca-certificates && mkdir -p /data/avatars && chown -R node:node /data
+RUN apk add --no-cache tzdata ca-certificates && mkdir -p /data/avatars /data/grants && chmod 0700 /data/grants && chown -R node:node /data
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \

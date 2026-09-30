@@ -1,0 +1,5 @@
+{
+  "extends": "../auth/tsconfig.json",
+  "compilerOptions": { "declaration": false },
+  "include": ["src", "tests", "vite.config.ts"]
+}
