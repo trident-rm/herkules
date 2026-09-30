@@ -33,7 +33,7 @@ export const configSchema = z.object({
   WEB_DIR: z.string().min(1).optional(),
   /** The search seam (db/search). `pgroonga` is the FRAME check-5 fallback and needs the custom image. */
   SEARCH_INDEX: z.enum(["trgm", "pgroonga"]).default("trgm"),
-  /** Optional Rust feed/article/content/tag/AI reads; OAuth and the other queries remain here. */
+  /** Optional Rust corpus reads; OAuth, transports and writers remain here. */
   BBS_RUST_READ_ORIGIN: z.string().url().optional(),
   /** `false` skips the boot-time CREATE DATABASE probe (db/index.ts ensureDatabase); run `createdb bbs` once instead. */
   BBS_CREATE_DATABASE: z
@@ -89,6 +89,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       );
     if (!/^postgres(ql)?:\/\//.test(raw.DATABASE_URL)) {
       throw new TypeError("BBS_RUST_READ_ORIGIN requires the shared Postgres corpus, not PGlite");
+    }
+    if (raw.SEARCH_INDEX !== "trgm") {
+      throw new Error("BBS_RUST_READ_ORIGIN requires SEARCH_INDEX=trgm");
     }
     rustReadOrigin = url.origin;
   }

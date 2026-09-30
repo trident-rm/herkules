@@ -66,43 +66,7 @@ impl FeedQuery {
         {
             return Err(FeedError::InvalidQuery);
         }
-        let limit = match self.limit.as_deref() {
-            None => 20,
-            Some(raw) => {
-                let raw = raw.trim_matches(js_whitespace);
-                let n = if raw.is_empty() {
-                    0.0
-                } else {
-                    if let Some((digits, radix)) = raw
-                        .strip_prefix("0x")
-                        .or_else(|| raw.strip_prefix("0X"))
-                        .map(|s| (s, 16))
-                        .or_else(|| {
-                            raw.strip_prefix("0b")
-                                .or_else(|| raw.strip_prefix("0B"))
-                                .map(|s| (s, 2))
-                        })
-                        .or_else(|| {
-                            raw.strip_prefix("0o")
-                                .or_else(|| raw.strip_prefix("0O"))
-                                .map(|s| (s, 8))
-                        })
-                    {
-                        u64::from_str_radix(digits, radix).map_err(|_| FeedError::InvalidQuery)?
-                            as f64
-                    } else {
-                        raw.parse::<f64>().map_err(|_| FeedError::InvalidQuery)?
-                    }
-                };
-                if !n.is_finite()
-                    || !(0.0..=9_007_199_254_740_991.0).contains(&n)
-                    || n.fract() != 0.0
-                {
-                    return Err(FeedError::InvalidQuery);
-                }
-                if n == 0.0 { 20 } else { n.min(100.0) as usize }
-            }
-        };
+        let limit = parse_limit(self.limit.as_deref(), 20, 100)?;
         let cursor = self
             .cursor
             .filter(|s| !s.is_empty())
@@ -119,6 +83,50 @@ impl FeedQuery {
     }
 }
 
+pub(crate) fn parse_limit(
+    raw: Option<&str>,
+    fallback: usize,
+    max: usize,
+) -> Result<usize, FeedError> {
+    Ok(match raw {
+        None => fallback,
+        Some(raw) => {
+            let raw = raw.trim_matches(js_whitespace);
+            let n = if raw.is_empty() {
+                0.0
+            } else {
+                if let Some((digits, radix)) = raw
+                    .strip_prefix("0x")
+                    .or_else(|| raw.strip_prefix("0X"))
+                    .map(|s| (s, 16))
+                    .or_else(|| {
+                        raw.strip_prefix("0b")
+                            .or_else(|| raw.strip_prefix("0B"))
+                            .map(|s| (s, 2))
+                    })
+                    .or_else(|| {
+                        raw.strip_prefix("0o")
+                            .or_else(|| raw.strip_prefix("0O"))
+                            .map(|s| (s, 8))
+                    })
+                {
+                    u64::from_str_radix(digits, radix).map_err(|_| FeedError::InvalidQuery)? as f64
+                } else {
+                    raw.parse::<f64>().map_err(|_| FeedError::InvalidQuery)?
+                }
+            };
+            if !n.is_finite() || !(0.0..=9_007_199_254_740_991.0).contains(&n) || n.fract() != 0.0 {
+                return Err(FeedError::InvalidQuery);
+            }
+            if n == 0.0 {
+                fallback
+            } else {
+                n.min(max as f64) as usize
+            }
+        }
+    })
+}
+
 pub fn encode_cursor(key: &FeedKey) -> String {
     URL_SAFE_NO_PAD.encode(
         serde_json::to_vec(&json!(["f", iso(key.at), key.position, key.id]))
@@ -127,24 +135,7 @@ pub fn encode_cursor(key: &FeedKey) -> String {
 }
 
 pub fn decode_cursor(raw: &str) -> Option<FeedKey> {
-    // Buffer.from(base64url) accepts either alphabet, padding and stray non-alphabet bytes.
-    let clean: String = raw
-        .chars()
-        .take_while(|c| *c != '=')
-        .filter_map(|c| match c {
-            '-' => Some('+'),
-            '_' => Some('/'),
-            c if c.is_ascii_alphanumeric() || c == '+' || c == '/' => Some(c),
-            _ => None,
-        })
-        .collect();
-    let decoder = GeneralPurpose::new(
-        &alphabet::STANDARD,
-        GeneralPurposeConfig::new()
-            .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-            .with_decode_allow_trailing_bits(true),
-    );
-    let tuple: Value = serde_json::from_slice(&decoder.decode(clean).ok()?).ok()?;
+    let tuple = cursor_value(raw)?;
     let fields = tuple.as_array()?;
     if fields.first()?.as_str()? != "f" {
         return None;
@@ -170,8 +161,29 @@ pub fn decode_cursor(raw: &str) -> Option<FeedKey> {
     })
 }
 
+pub(crate) fn cursor_value(raw: &str) -> Option<Value> {
+    // Buffer.from(base64url) accepts either alphabet, padding and stray non-alphabet bytes.
+    let clean: String = raw
+        .chars()
+        .take_while(|c| *c != '=')
+        .filter_map(|c| match c {
+            '-' => Some('+'),
+            '_' => Some('/'),
+            c if c.is_ascii_alphanumeric() || c == '+' || c == '/' => Some(c),
+            _ => None,
+        })
+        .collect();
+    let decoder = GeneralPurpose::new(
+        &alphabet::STANDARD,
+        GeneralPurposeConfig::new()
+            .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+            .with_decode_allow_trailing_bits(true),
+    );
+    serde_json::from_slice(&decoder.decode(clean).ok()?).ok()
+}
+
 /// Fold BMP code units only, retaining expansions and supplementary letters exactly as JS does.
-fn normalize(raw: &str) -> String {
+pub(crate) fn normalize(raw: &str) -> String {
     raw.chars()
         .map(|ch| {
             let ch = match ch as u32 {
@@ -316,7 +328,7 @@ impl Library {
     }
 }
 
-fn summary(row: &PgRow) -> Result<ArticleSummary, sqlx::Error> {
+pub(crate) fn summary(row: &PgRow) -> Result<ArticleSummary, sqlx::Error> {
     let introduction: Option<String> = row.try_get("introduction")?;
     let body_head: Option<String> = row.try_get("body_head")?;
     let title: String = row.try_get("title")?;

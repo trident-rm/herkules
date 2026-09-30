@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { loadConfig } from "../src/config.ts";
 import { withRustReads } from "../src/library/rust.ts";
 import {
   FAKE,
@@ -94,7 +95,7 @@ describe("incremental Rust reads", () => {
     }
   });
 
-  it("rehydrates dates, keeps unported methods local and sends no credentials", async () => {
+  it("rehydrates dates and sends no credentials", async () => {
     const local = fakeLibrary();
     const wire = JSON.parse(JSON.stringify(await local.article(FAKE.id)));
     local.calls.length = 0;
@@ -104,14 +105,71 @@ describe("incremental Rust reads", () => {
     expect(article?.publishedAt).toBeInstanceOf(Date);
     expect(article?.discoveredAt).toBeInstanceOf(Date);
     expect(local.calls).toEqual([]);
-    await rust.search({ q: "PID", limit: 5 });
-    await rust.status();
-    expect(local.calls).toEqual(["search", "status"]);
     const [url, init] = transport.mock.calls[0]!;
     expect(url).toBe(`http://127.0.0.1:3203/api/articles/${FAKE.id}`);
     expect(init?.headers).toEqual({ accept: "application/json" });
     expect(init?.redirect).toBe("error");
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("delegates search, KB and status through the existing REST/MCP presenters", async () => {
+    const local = fakeLibrary();
+    const transport = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      if (typeof input !== "string") throw new Error("expected URL string");
+      const url = new URL(input);
+      const q = url.searchParams.get("q") ?? "PID";
+      if (url.pathname === "/api/search") return Response.json(await local.search({ q, limit: 2 }));
+      if (url.pathname === "/api/kb/browse")
+        return Response.json(await local.kbBrowse({ limit: 2 }));
+      if (url.pathname === "/api/kb/entities")
+        return Response.json({ items: await local.entities({ limit: 2 }) });
+      if (url.pathname === "/api/status") return Response.json(await local.status());
+      throw new Error(`unexpected route ${url.pathname}`);
+    });
+    const app = await createFakeApp({
+      decorateLibrary: (lib) => withRustReads(lib, { origin: "http://rust", fetch: transport }),
+    });
+    let client: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+      for (const path of [
+        "/api/search?q=PID&limit=2",
+        "/api/kb/browse?limit=2",
+        "/api/kb/entities?limit=2",
+        "/api/status",
+      ]) {
+        expect((await app.fetch(path)).status).toBe(200);
+      }
+      client = await connect(MCP_RESOURCE, await app.token(), fetchVia(app.app));
+      for (const [name, args] of [
+        ["search_articles", { query: "PID", limit: 2 }],
+        ["search_kb", { limit: 2 }],
+        ["list_entities", { limit: 2 }],
+        ["library_status", {}],
+      ] as const) {
+        const result = await client.callTool({ name, arguments: args });
+        expect(result.isError, name).toBeFalsy();
+      }
+      transport.mockResolvedValueOnce(Response.json({ error: "empty_query" }, { status: 400 }));
+      const empty = await app.fetch("/api/search?q=%22%22");
+      expect(empty.status).toBe(400);
+      expect(await empty.json()).toMatchObject({ error: "empty_query" });
+    } finally {
+      await client?.close();
+      await app.close();
+    }
+  });
+  it("rejects PGroonga delegation at the config boundary", () => {
+    const env = {
+      PUBLIC_ORIGIN: "https://herkules.example",
+      APP_ORIGIN: "https://bbs.example",
+      DATABASE_URL: "postgres://localhost/bbs",
+      BBS_CLIENT_SECRET: "x".repeat(16),
+      BBS_COOKIE_SECRET: "x".repeat(32),
+      BBS_RUST_READ_ORIGIN: "http://rust",
+      SEARCH_INDEX: "pgroonga",
+    };
+    expect(() => loadConfig(env)).toThrow("SEARCH_INDEX=trgm");
+    expect(loadConfig({ ...env, SEARCH_INDEX: "trgm" }).rustReadOrigin).toBe("http://rust");
   });
 
   it("accepts a missing row but rejects missing routes and upstream failures without fallback", async () => {

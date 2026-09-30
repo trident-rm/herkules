@@ -1,6 +1,6 @@
 # BBS Rust service
 
-First increment of the BBS migration to Rust, Askama SSR and Vite-built static assets. The existing Hono application remains the deployed application. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
+Incremental BBS migration to Rust, Askama SSR and Vite-built static assets. The existing Hono application remains the deployed application. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
 
 ## Run
 
@@ -59,6 +59,13 @@ The importer replaces the target corpus. Keep this URL pointing to the separate 
 | Route                                                    | Behavior                                                                |
 | -------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `/api/articles`                                          | Date-ordered feed, tag/group/text filters and compatible keyset cursors |
+| `/api/search`                                            | Ranked trgm search, highlight segments and compatible rank cursors      |
+| `/api/kb/browse`                                         | KB cards and cross-filtered domain/robot/genre facets                   |
+| `/api/kb/entities`                                       | Entity counts with literal name filtering                               |
+| `/api/kb/entities/{name}`                                | Entity detail; optional `key` query preserves an already-normalized key |
+| `/api/status`                                            | Corpus, AI, entity and crawler counts and dates                         |
+| `/api/articles/{id}/head`                                | Lightweight article metadata for the existing Node head presenter       |
+| `/api/kb/entities/{name}/head`                           | Entity metadata; optional `key` query as above                          |
 | `/healthz`                                               | Database read readiness                                                 |
 | `/api/articles/{id}`                                     | Existing article DTO, fetched rows only                                 |
 | `/api/articles/{id}/content?format=text\|markdown\|html` | Existing content fallback and `X-Content-Format` contract               |
@@ -67,7 +74,7 @@ The importer replaces the target corpus. Keep this URL pointing to the separate 
 | `/articles/{id}`                                         | Askama article reader preview with full body and metadata               |
 | `/assets/*`                                              | Vite build assets when `WEB_DIR` is set                                 |
 
-Corpus reads are anonymous, matching the existing application. This process has no login, session, membership or authenticated MCP implementation. Keep it on loopback or the private service network during this increment. The reader now includes a sticky desktop sidebar with a table of contents, AI overview, specifications and resources. On narrow screens, anchor controls reach the same sections; specifications use native disclosures. The React mobile sheet, lightbox and active-heading indicator are still pending, along with feed SSR, search, knowledge base and account pages. See the [frontend direction](../MIGRATION.md#frontend-direction) for the React widget plan.
+Corpus reads are anonymous, matching the existing application. This process has no login, session, membership or authenticated MCP implementation. Keep it on loopback or the private service network during this increment. The reader now includes a sticky desktop sidebar with a table of contents, AI overview, specifications and resources. On narrow screens, anchor controls reach the same sections; specifications use native disclosures. The React mobile sheet, lightbox and active-heading indicator are still pending, along with feed/search/knowledge-base SSR and account pages. See the [frontend direction](../MIGRATION.md#frontend-direction) for the React widget plan.
 
 Askama escapes metadata and plain-text fallback bodies. Only stored `content_html` is rendered as HTML: the existing corpus writer owns sanitization. The page sets a script-free CSP, `no-store`, `nosniff` and `no-referrer`.
 
@@ -79,7 +86,7 @@ Set this in the **existing Node BBS service** environment and restart it:
 BBS_RUST_READ_ORIGIN=http://127.0.0.1:3203
 ```
 
-Both services must point at the same Postgres corpus. The `Library` adapter replaces only `articles`, `article`, `content`, `tags`, and `ai`. Node still owns API validation, OAuth/session checks, MCP transport and token validation, admission, article-refresh hooks, remaining reads, migrations, crawler and bot. It sends no browser cookies or bearer tokens to Rust. Upstream errors fail the request; they do not silently switch back to Node. Remove the variable and restart Node to restore all original reads.
+Both services must point at the same Postgres corpus. The `Library` adapter delegates all twelve corpus read methods, including both head metadata methods. Node still owns API validation and presentation, OAuth/session checks, MCP transport and token validation, admission, article-refresh hooks, migrations, crawler and bot. Delegation requires `SEARCH_INDEX=trgm`; both Node configuration and Rust startup reject another search index. It sends no browser cookies or bearer tokens to Rust. Upstream errors fail the request; they do not silently switch back to Node. Remove the variable and restart Node to restore all original reads.
 
 This option does not change browser page routing: open the Rust port directly for the SSR preview. Do not replace the production `/articles/*` routes yet, because navigation and reader interaction parity are incomplete.
 
@@ -91,8 +98,29 @@ and cap at 100. Queries use the existing folded `article_search` and `kb_search`
 documents, AND at most eight literal substring terms, and keep date order.
 Cursors use the same base64url JSON tuple as Node, so pages can cross the adapter
 boundary. Invalid cursors preserve the `invalid_cursor` 400 envelope. Every read
-filters out non-fetched articles. No ranked search or browser feed route is
-implemented yet.
+filters out non-fetched articles. The browser feed route is not implemented yet.
+
+## Ranked search and KB contracts
+
+Ranked search uses the existing trgm substring recall and BM25-shaped ranking,
+with the same twelve-significant-digit constants and `(score, id)` cursor.
+It performs two queries: corpus statistics, then the bounded page. Snippets
+choose the window covering the most distinct terms, preserve original case and
+width, merge overlapping hits, and use UTF-16 offsets without cutting a surrogate
+pair at the window edges. Empty parsed terms preserve `empty_query`.
+
+KB browsing performs two queries: limited cards with total, then all three
+facet axes. Each axis counts under the other two filters and the query, leaving
+its own choices available. Scalar AI values become empty arrays as in Node.
+Entities, entity/article heads and status each use one query. Status freshness is
+computed at response time; requests compared across processes can differ by a
+second. Entity heads hide orphaned entities while entity detail preserves their
+header, matching the existing library.
+
+These are fixture-based correctness checks, not production performance results.
+Representative query plans and release-build resource measurements remain cutover
+gates. The existing KB card limit behavior is preserved, including the UI gap
+recorded in `KNOWN_ISSUES.md`.
 
 ## Verify
 

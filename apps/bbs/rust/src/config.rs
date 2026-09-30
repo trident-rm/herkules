@@ -11,6 +11,9 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, String> {
+        if env::var("SEARCH_INDEX").is_ok_and(|kind| kind != "trgm") {
+            return Err("Rust corpus reads require SEARCH_INDEX=trgm".into());
+        }
         let database_url = env::var("DATABASE_URL").map_err(|_| "DATABASE_URL is required")?;
         let database =
             Url::parse(&database_url).map_err(|_| "DATABASE_URL must be a Postgres URL")?;

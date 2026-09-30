@@ -13,8 +13,10 @@ use serde_json::json;
 
 use crate::{
     feed::{FeedError, FeedQuery},
+    kb::{EntityQuery, KbQuery, entity_key},
     library::{ContentFormat, Library, article_id},
     reader,
+    search::SearchError,
 };
 
 #[derive(Clone)]
@@ -28,6 +30,13 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(health))
         .route("/api/articles", get(feed))
+        .route("/api/search", get(search))
+        .route("/api/kb/browse", get(kb_browse))
+        .route("/api/kb/entities", get(entities))
+        .route("/api/kb/entities/{name}", get(entity))
+        .route("/api/kb/entities/{name}/head", get(entity_head))
+        .route("/api/status", get(status))
+        .route("/api/articles/{id}/head", get(head))
         .route("/api/articles/{id}", get(article))
         .route("/api/articles/{id}/content", get(content))
         .route("/api/articles/{id}/ai", get(ai))
@@ -40,6 +49,7 @@ pub fn router(state: AppState) -> Router {
 pub enum ApiError {
     Invalid,
     Feed(FeedError),
+    Search(SearchError),
     Missing,
     Database(sqlx::Error),
     Render(askama::Error),
@@ -70,6 +80,12 @@ impl IntoResponse for ApiError {
             Self::Feed(FeedError::InvalidCursor) => {
                 error(StatusCode::BAD_REQUEST, "invalid_cursor", "unusable cursor")
             }
+            Self::Search(SearchError::Query(e)) => Self::Feed(e).into_response(),
+            Self::Search(SearchError::Empty) => error(
+                StatusCode::BAD_REQUEST,
+                "empty_query",
+                "search needs at least one term",
+            ),
             Self::Missing => error(StatusCode::NOT_FOUND, "not_found", "no such row"),
             Self::Database(e) => {
                 tracing::error!(error = %e, "corpus query failed");
@@ -124,6 +140,102 @@ async fn feed(
         .validate()
         .map_err(ApiError::Feed)?;
     Ok(Json(state.library.feed(query).await?).into_response())
+}
+
+async fn search(
+    State(state): State<AppState>,
+    query: Result<Query<FeedQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let query = query
+        .map_err(|_| ApiError::Invalid)?
+        .0
+        .validate_search()
+        .map_err(ApiError::Search)?;
+    Ok(Json(state.library.search(query).await?).into_response())
+}
+
+async fn kb_browse(
+    State(state): State<AppState>,
+    query: Result<Query<KbQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let q = query
+        .map_err(|_| ApiError::Invalid)?
+        .0
+        .validate()
+        .map_err(ApiError::Feed)?;
+    Ok(Json(state.library.kb_browse(q).await?).into_response())
+}
+async fn entities(
+    State(state): State<AppState>,
+    query: Result<Query<EntityQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let (q, limit) = query
+        .map_err(|_| ApiError::Invalid)?
+        .0
+        .validate()
+        .map_err(ApiError::Feed)?;
+    Ok(Json(state.library.entities(q, limit).await?).into_response())
+}
+#[derive(Default, Deserialize)]
+struct EntityKeyQuery {
+    key: Option<String>,
+}
+fn entity_request_key(
+    path: Result<Path<String>, PathRejection>,
+    query: Result<Query<EntityKeyQuery>, QueryRejection>,
+) -> Result<String, ApiError> {
+    let name = path.map_err(|_| ApiError::Invalid)?.0;
+    let q = query.map_err(|_| ApiError::Invalid)?.0;
+    if let Some(key) = q.key {
+        if key.encode_utf16().count() > 400 {
+            return Err(ApiError::Invalid);
+        }
+        return Ok(key);
+    }
+    if name.is_empty() || name.encode_utf16().count() > 200 {
+        return Err(ApiError::Invalid);
+    }
+    Ok(entity_key(&name))
+}
+async fn entity(
+    State(state): State<AppState>,
+    path: Result<Path<String>, PathRejection>,
+    query: Result<Query<EntityKeyQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let key = entity_request_key(path, query)?;
+    Ok(Json(state.library.entity(&key).await?.ok_or(ApiError::Missing)?).into_response())
+}
+
+async fn status(State(state): State<AppState>) -> Result<Response, ApiError> {
+    Ok(Json(state.library.status().await?).into_response())
+}
+async fn head(
+    State(state): State<AppState>,
+    path: Result<Path<String>, PathRejection>,
+) -> Result<Response, ApiError> {
+    Ok(Json(
+        state
+            .library
+            .head(&id(path)?)
+            .await?
+            .ok_or(ApiError::Missing)?,
+    )
+    .into_response())
+}
+async fn entity_head(
+    State(state): State<AppState>,
+    path: Result<Path<String>, PathRejection>,
+    query: Result<Query<EntityKeyQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let key = entity_request_key(path, query)?;
+    Ok(Json(
+        state
+            .library
+            .entity_head(&key)
+            .await?
+            .ok_or(ApiError::Missing)?,
+    )
+    .into_response())
 }
 
 async fn article(
@@ -261,6 +373,12 @@ mod tests {
             ("/api/articles?limit=1.5", 400),
             ("/api/articles?scope=unknown", 400),
             ("/api/articles?cursor=bad", 400),
+            ("/api/search?q=pid&cursor=bad", 400),
+            ("/api/search?q=%22%22", 400),
+            ("/api/search?q=", 400),
+            ("/api/search", 400),
+            ("/api/kb/browse?limit=-1", 400),
+            ("/api/kb/entities?limit=1.5", 400),
             (
                 "/api/articles/01J0000000000000000000000A/content?format=pdf",
                 400,

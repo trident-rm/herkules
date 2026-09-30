@@ -2,5 +2,8 @@ pub mod ai;
 pub mod config;
 pub mod feed;
 pub mod http;
+pub mod kb;
 pub mod library;
 pub mod reader;
+pub mod search;
+pub mod status;

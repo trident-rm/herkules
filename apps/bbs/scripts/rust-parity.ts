@@ -10,14 +10,18 @@ import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import postgres from "postgres";
 import { ID, FEED_ORDER, seedLibrary } from "../tests/seed.ts";
+import { buildDocument } from "../src/import/derive.ts";
 import { withRustReads } from "../src/library/rust.ts";
 import type {
   ArticleListQuery,
+  SearchPage,
   ArticleSummary,
   Page,
   Cursor,
   ArticleId,
 } from "../src/library/types.ts";
+
+import { entityKey } from "../src/library/types.ts";
 
 const maintenance = process.env.BBS_RUST_TEST_POSTGRES;
 if (!maintenance)
@@ -122,6 +126,89 @@ try {
       checks++;
     } while (cursor);
   }
+  for (const query of feedQueries.filter((q) => q.q?.trim() && q.q !== '""')) {
+    let cursor: Cursor | undefined;
+    do {
+      const expected: SearchPage = await fixture.library.search({ ...query, q: query.q!, cursor });
+      const actual: SearchPage = await rust.search({ ...query, q: query.q!, cursor });
+      assert.deepEqual(
+        json(actual),
+        json(expected),
+        `search ${JSON.stringify({ ...query, cursor })}`,
+      );
+      cursor = actual.nextCursor ?? undefined;
+      checks++;
+    } while (cursor);
+  }
+  for (const q of ['""', '" "']) {
+    await assert.rejects(() => rust.search({ q, limit: 2 }), { code: "empty_query" });
+    checks++;
+  }
+  for (const q of [undefined, "步兵", "PID", "%", '""', "m3508"]) {
+    for (const domain of [undefined, "控制", "机械", "missing"]) {
+      for (const robot of [undefined, "步兵", "机械臂"]) {
+        for (const genre of [undefined, "开源项目", "经验分享"]) {
+          const query = { q, domain, robot, genre, limit: 1 };
+          assert.deepEqual(
+            json(await rust.kbBrowse(query)),
+            json(await fixture.library.kbBrowse(query)),
+            `KB ${JSON.stringify(query)}`,
+          );
+          checks++;
+        }
+      }
+    }
+  }
+  for (const q of [undefined, "m3508", "PID", "%", "_", "\\", "missing"]) {
+    for (const limit of [1, 200, 500]) {
+      const query = { q, limit };
+      assert.deepEqual(
+        json(await rust.entities(query)),
+        json(await fixture.library.entities(query)),
+        `entities ${JSON.stringify(query)}`,
+      );
+      checks++;
+    }
+  }
+  const entities = await fixture.library.entities({ limit: 500 });
+  for (const key of [...entities.map((e) => e.key), entityKey("missing")]) {
+    assert.deepEqual(
+      json(await rust.entity(key)),
+      json(await fixture.library.entity(key)),
+      `entity ${key}`,
+    );
+    assert.deepEqual(
+      json(await rust.entityHead(key)),
+      json(await fixture.library.entityHead(key)),
+      `entity head ${key}`,
+    );
+    checks += 2;
+  }
+  for (const id of [...Object.values(ID), "01J0000000000000000000000Z" as ArticleId]) {
+    assert.deepEqual(json(await rust.head(id)), json(await fixture.library.head(id)), `head ${id}`);
+    checks++;
+  }
+  const expectedStatus = await fixture.library.status();
+  const actualStatus = await rust.status();
+  assert.ok(
+    Math.abs(
+      (actualStatus.crawler.lastCheckedAgeSeconds ?? 0) -
+        (expectedStatus.crawler.lastCheckedAgeSeconds ?? 0),
+    ) <= 1,
+    "status age within request time",
+  );
+  assert.deepEqual(
+    json({
+      ...actualStatus,
+      crawler: {
+        ...actualStatus.crawler,
+        lastCheckedAgeSeconds: expectedStatus.crawler.lastCheckedAgeSeconds,
+      },
+    }),
+    json(expectedStatus),
+    "status counts and dates",
+  );
+  checks++;
   for (const path of [
     "/api/articles?limit=-1",
     "/api/articles?limit=1.5",
@@ -290,6 +377,101 @@ try {
     checks += 4;
   } finally {
     await aiEdits.end();
+  }
+  // Exercise UTF-16 snippet boundaries, overlap merging, field choice and the
+  // per-term occurrence cap on actual ranked responses.
+  const edgeEdits = postgres(databaseUrl.href, { max: 1 });
+  try {
+    const base = (
+      await edgeEdits`SELECT title, author, tags, introduction FROM article_search WHERE article_id=${ID.A}`
+    )[0]!;
+    for (const [body, queries] of [
+      ["🤖".repeat(31) + "ＰＩＤ\t电机\n" + "🤖".repeat(40), ["pid", "PID 电机", "🤖"]],
+      [
+        "prefix\uFEFF" + "PID ".repeat(70) + "底盘 PID 电机 suffix",
+        ["pid", "底盘 pid", "pid 电机"],
+      ],
+      [
+        "x".repeat(150) + "机器机器人\n\t[1] ＰＩＤ" + "x".repeat(150),
+        ["机器 机器人", "机器人 pid", "[1]"],
+      ],
+      ["İ 𐐀 𐐨 100% a_b C:\\bin ", ["İ", "𐐀", "𐐨", "100%", "a_b", "C:\\bin"]],
+    ] as const) {
+      const document = buildDocument([
+        String(base.title),
+        String(base.author),
+        String(base.tags),
+        String(base.introduction),
+        body,
+      ]);
+      await edgeEdits`UPDATE article_search SET body_text=${body},document=${document} WHERE article_id=${ID.A}`;
+      await edgeEdits`UPDATE articles SET body_text=${body} WHERE id=${ID.A}`;
+      for (const q of queries) {
+        let cursor: Cursor | undefined;
+        do {
+          const expected: SearchPage = await fixture.library.search({ q, limit: 1, cursor });
+          const actual: SearchPage = await rust.search({ q, limit: 1, cursor });
+          assert.deepEqual(json(actual), json(expected), `snippet edge ${q}`);
+          cursor = actual.nextCursor ?? undefined;
+          checks++;
+        } while (cursor);
+      }
+    }
+    for (const kb of [
+      { domain: "scalar", robotTypes: false },
+      {
+        domain: ["控制", null, 2, "控制", "🤖", "𐐀"],
+        robotTypes: ["步兵", {}, true],
+        entities: [1, "PID"],
+        pitfalls: [null, "test"],
+      },
+    ]) {
+      await edgeEdits`UPDATE article_ai SET status='ready',overview_json=${edgeEdits.json({ genre: 123 })},kb_json=${edgeEdits.json(kb)} WHERE article_id=${ID.A}`;
+      for (const query of [
+        { limit: 1000 },
+        { domain: "控制", limit: 1 },
+        { robot: "步兵", limit: 2 },
+      ]) {
+        assert.deepEqual(
+          json(await rust.kbBrowse(query)),
+          json(await fixture.library.kbBrowse(query)),
+          "malformed facet arrays",
+        );
+        checks++;
+      }
+    }
+    for (const name of ["İ", "Σ ΟΣ", "𐐀", "控制 🤖", "Name/(!'*.)"]) {
+      const key = entityKey(name);
+      await edgeEdits`INSERT INTO kb_entities (key,name,article_count,updated_at) VALUES (${key},${name},1,now())`;
+      await edgeEdits`INSERT INTO article_entities (article_id,entity_key) VALUES (${ID.A},${key})`;
+      assert.deepEqual(
+        json(await rust.entity(key)),
+        json(await fixture.library.entity(key)),
+        `Unicode entity ${name}`,
+      );
+      assert.deepEqual(
+        json(await rust.entityHead(key)),
+        json(await fixture.library.entityHead(key)),
+        `Unicode entity head ${name}`,
+      );
+      const direct = await fetch(`${origin}/api/kb/entities/${encodeURIComponent(name)}`);
+      assert.deepEqual(
+        await direct.json(),
+        json(await fixture.library.entity(key)),
+        `display name entity ${name}`,
+      );
+      checks += 3;
+    }
+    const orphan = entityKey("orphan");
+    assert.deepEqual(
+      json(await rust.entity(orphan)),
+      json(await fixture.library.entity(orphan)),
+      "orphan detail survives",
+    );
+    assert.equal(await rust.entityHead(orphan), null, "orphan head hidden");
+    checks += 2;
+  } finally {
+    await edgeEdits.end();
   }
   checks += 12;
   console.log(
