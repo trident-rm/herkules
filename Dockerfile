@@ -63,7 +63,7 @@ COPY --from=build --chown=node:node /out/feishu /feishu
 # The `avatars` named volume inherits this directory's ownership, so it has to exist and be
 # node-owned in the image; only root can create it, hence the two USER lines.
 USER root
-RUN apk add --no-cache tzdata ca-certificates && mkdir -p /data/avatars /data/grants && chown -R node:node /data
+RUN apk add --no-cache tzdata ca-certificates && mkdir -p /data/avatars /data/grants && chmod 0700 /data/grants && chown -R node:node /data
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \
