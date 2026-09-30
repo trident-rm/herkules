@@ -10,3 +10,4 @@ pub mod reader;
 pub mod search;
 pub mod session;
 pub mod status;
+pub mod web;

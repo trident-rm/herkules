@@ -32,5 +32,4 @@ rmcp = { version = "3.5.0", default-features = false, features = [
   "transport-streamable-http-server",
 ] }
 
-[dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

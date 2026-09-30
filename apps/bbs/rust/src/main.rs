@@ -84,16 +84,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut app = router(AppState {
         library: Library::new(pool.clone()),
-        app_origin: config.app_origin,
+        app_origin: config.app_origin.clone(),
         stylesheet: stylesheet.map(|s| s.url),
         auth,
         refresh_pool: refresh_pool.clone(),
     });
     if let Some(web_dir) = config.web_dir {
-        app = app.nest_service(
-            "/assets",
-            tower_http::services::ServeDir::new(web_dir.join("assets")),
-        );
+        app = app.fallback_service(herkules_bbs::web::router(
+            &web_dir,
+            Library::new(pool.clone()),
+            config.app_origin.clone(),
+        )?);
     }
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!(address = %listener.local_addr()?, "bbs-rust listening");

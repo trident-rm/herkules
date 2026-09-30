@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 
-const allTargets = ["auth", "bbs", "ai", "platform"];
+const allTargets = ["auth", "bbs", "bbs-web", "ai", "platform"];
 const nodeBuildInputs = new Set([
   "package.json",
   "pnpm-lock.yaml",
@@ -29,7 +29,7 @@ export function selectImageTargets(paths, { all = false } = {}) {
       path.startsWith("apps/bbs/rust/") ||
       path.startsWith("packages/auth-rust/")
     )
-      add("bbs");
+      add("bbs", "bbs-web");
     if (nodeBuildInputs.has(path) || path.startsWith("tsconfig")) add(...allTargets);
     if (isBuildInput(path, "services/feishu", ["src"])) add("auth");
     if (isBuildInput(path, "services/auth", ["src", "drizzle"])) add("auth");
@@ -41,10 +41,11 @@ export function selectImageTargets(paths, { all = false } = {}) {
       add("ai");
     if (isBuildInput(path, "services/web", ["src", "public"])) add("platform");
     if (isBuildInput(path, "apps/training", ["docs", "src"])) add("platform");
-    if (isBuildInput(path, "apps/bbs", ["src", "drizzle", "web/src", "web/public"])) add("bbs");
-    if (isBuildInput(path, "packages/auth-middleware", ["src"])) add("auth", "bbs");
-    if (isBuildInput(path, "packages/oauth-client", ["src"])) add("bbs");
-    if (isBuildInput(path, "packages/ui", ["src"])) add("bbs", "platform");
+    if (isBuildInput(path, "apps/bbs", ["src", "drizzle", "web/src", "web/public"]))
+      add("bbs", "bbs-web");
+    if (isBuildInput(path, "packages/auth-middleware", ["src"])) add("auth", "bbs", "bbs-web");
+    if (isBuildInput(path, "packages/oauth-client", ["src"])) add("bbs", "bbs-web");
+    if (isBuildInput(path, "packages/ui", ["src"])) add("bbs", "bbs-web", "platform");
   }
 
   const selected = allTargets.filter((target) => targets.has(target));
