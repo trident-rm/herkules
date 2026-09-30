@@ -40,7 +40,7 @@ const CURSOR_CURRENT_REDIRECTS = new Set([
 
 /**
  * MCP client redirect allowlist. Desktop clients use loopback redirects. The
- * two HTTPS entries are callbacks hosted by the clients themselves. `vscode://`
+ * HTTPS entries are callbacks hosted by the clients themselves. `vscode://`
  * is listed for the record: Better Auth rejects authority-bearing private
  * schemes under both application types, so VS Code must use its loopback
  * redirect.
@@ -51,6 +51,7 @@ export const REDIRECT_ALLOW: readonly RegExp[] = [
   /^http:\/\/\[::1\](:\d+)?\//,
   /^https:\/\/claude\.ai\/api\/mcp\/auth_callback$/,
   /^https:\/\/www\.cursor\.com\/agents\/mcp\/oauth\/callback$/,
+  /^https:\/\/chatgpt\.com\/connector_platform_oauth_redirect$/,
   /^https:\/\/vscode\.dev\/redirect/,
   /^vscode:\/\//,
 ];
