@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
+    feed::{FeedError, FeedQuery},
     library::{ContentFormat, Library, article_id},
     reader,
 };
@@ -26,6 +27,7 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(health))
+        .route("/api/articles", get(feed))
         .route("/api/articles/{id}", get(article))
         .route("/api/articles/{id}/content", get(content))
         .route("/api/articles/{id}/ai", get(ai))
@@ -37,6 +39,7 @@ pub fn router(state: AppState) -> Router {
 
 pub enum ApiError {
     Invalid,
+    Feed(FeedError),
     Missing,
     Database(sqlx::Error),
     Render(askama::Error),
@@ -59,6 +62,14 @@ impl IntoResponse for ApiError {
                 "invalid_request",
                 "invalid article id or content format",
             ),
+            Self::Feed(FeedError::InvalidQuery) => error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid feed query",
+            ),
+            Self::Feed(FeedError::InvalidCursor) => {
+                error(StatusCode::BAD_REQUEST, "invalid_cursor", "unusable cursor")
+            }
             Self::Missing => error(StatusCode::NOT_FOUND, "not_found", "no such row"),
             Self::Database(e) => {
                 tracing::error!(error = %e, "corpus query failed");
@@ -101,6 +112,18 @@ async fn health(State(state): State<AppState>) -> Response {
         Json(json!({ "ok": ok })),
     )
         .into_response()
+}
+
+async fn feed(
+    State(state): State<AppState>,
+    query: Result<Query<FeedQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let query = query
+        .map_err(|_| ApiError::Feed(FeedError::InvalidQuery))?
+        .0
+        .validate()
+        .map_err(ApiError::Feed)?;
+    Ok(Json(state.library.feed(query).await?).into_response())
 }
 
 async fn article(
@@ -234,6 +257,10 @@ mod tests {
         });
         for (path, status) in [
             ("/api/articles/not-an-id", 400),
+            ("/api/articles?limit=-1", 400),
+            ("/api/articles?limit=1.5", 400),
+            ("/api/articles?scope=unknown", 400),
+            ("/api/articles?cursor=bad", 400),
             (
                 "/api/articles/01J0000000000000000000000A/content?format=pdf",
                 400,

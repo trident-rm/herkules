@@ -11,7 +11,13 @@ import { stripVTControlCharacters } from "node:util";
 import postgres from "postgres";
 import { ID, FEED_ORDER, seedLibrary } from "../tests/seed.ts";
 import { withRustReads } from "../src/library/rust.ts";
-import type { ArticleId } from "../src/library/types.ts";
+import type {
+  ArticleListQuery,
+  ArticleSummary,
+  Page,
+  Cursor,
+  ArticleId,
+} from "../src/library/types.ts";
 
 const maintenance = process.env.BBS_RUST_TEST_POSTGRES;
 if (!maintenance)
@@ -67,6 +73,112 @@ try {
   const json = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
   const rust = withRustReads(fixture.library, { origin });
   let checks = 0;
+  const feedQueries: ArticleListQuery[] = [
+    { limit: 1 },
+    { limit: 2 },
+    { limit: 3 },
+    { limit: 100 },
+    { tag: "机械/结构", limit: 2 },
+    { group: "硬件", limit: 2 },
+    { group: "硬件", tag: "硬件/电机", limit: 1 },
+    { group: "missing", limit: 2 },
+    { tag: "x' OR true --", limit: 2 },
+    ...[
+      "步兵",
+      "ＰＩＤ",
+      '"步兵" 底盘',
+      "m3508",
+      " ",
+      '""',
+      "100%",
+      "%",
+      "_",
+      "\\",
+      "a_b",
+      "C:\\bin",
+      "İ",
+      "𐐀",
+      "a b c d e f g h i",
+    ].flatMap((q) => (["all", "title", "kb"] as const).map((scope) => ({ q, scope, limit: 2 }))),
+  ];
+  for (const query of feedQueries) {
+    let cursor: Cursor | undefined;
+    const seen: string[] = [];
+    do {
+      const expected: Page<ArticleSummary> = await fixture.library.articles({ ...query, cursor });
+      const actual: Page<ArticleSummary> = await rust.articles({ ...query, cursor });
+      assert.deepEqual(
+        json(actual),
+        json(expected),
+        `feed ${JSON.stringify({ ...query, cursor })}`,
+      );
+      assert.ok(
+        actual.items.every((item) => item.discoveredAt instanceof Date),
+        "feed MCP dates",
+      );
+      seen.push(...actual.items.map((item) => item.id));
+      assert.equal(new Set(seen).size, seen.length, "paging contains no duplicates");
+      cursor = actual.nextCursor ?? undefined;
+      checks++;
+    } while (cursor);
+  }
+  for (const path of [
+    "/api/articles?limit=-1",
+    "/api/articles?limit=1.5",
+    "/api/articles?scope=other",
+    `/api/articles?q=${"a".repeat(201)}`,
+  ]) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 400, path);
+    assert.equal(((await response.json()) as { error: string }).error, "invalid_request");
+    checks++;
+  }
+  const rankedCursor = (await fixture.library.search({ q: "步兵", limit: 1 })).nextCursor!;
+  for (const cursor of ["garbled", rankedCursor]) {
+    await assert.rejects(rust.articles({ limit: 2, cursor: cursor as Cursor }), {
+      name: "QueryError",
+      code: "invalid_cursor",
+    });
+    checks++;
+  }
+  for (const [raw, limit] of [
+    ["0", 20],
+    ["1000", 100],
+    ["2e1", 20],
+    ["0x14", 20],
+    ["0b10", 2],
+    ["0o2", 2],
+    ["", 20],
+  ] as const) {
+    const response = await fetch(`${origin}/api/articles?limit=${raw}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), json(await fixture.library.articles({ limit })));
+    checks++;
+  }
+
+  // Exercise the last tie-breaker independently of the seed's date/position ordering.
+  const tieEdits = postgres(databaseUrl.href, { max: 1 });
+  const original =
+    await tieEdits`SELECT id, published_at, listing_position FROM articles WHERE id IN (${ID.C}, ${ID.D}, ${ID.E})`;
+  try {
+    await tieEdits`UPDATE articles SET published_at='2026-01-07T08:00:00.000Z', listing_position=12 WHERE id IN (${ID.C}, ${ID.D}, ${ID.E})`;
+    let cursor: Cursor | undefined;
+    const ids: string[] = [];
+    do {
+      const expected: Page<ArticleSummary> = await fixture.library.articles({ limit: 1, cursor });
+      const actual: Page<ArticleSummary> = await rust.articles({ limit: 1, cursor });
+      assert.deepEqual(json(actual), json(expected), "feed date/position/id ties");
+      ids.push(...actual.items.map((item) => item.id));
+      cursor = actual.nextCursor ?? undefined;
+      checks++;
+    } while (cursor);
+    assert.equal(new Set(ids).size, FEED_ORDER.length);
+  } finally {
+    for (const row of original) {
+      await tieEdits`UPDATE articles SET published_at=${row.published_at}, listing_position=${row.listing_position} WHERE id=${row.id}`;
+    }
+    await tieEdits.end();
+  }
   for (const id of [
     ...FEED_ORDER,
     ID.SKIPPED,

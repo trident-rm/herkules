@@ -7,6 +7,7 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+base64 = "0.22"
 askama = "0.16.1"
 axum = "0.8.9"
 chrono = { version = "0.4", features = ["serde"] }

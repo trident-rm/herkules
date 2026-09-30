@@ -33,7 +33,7 @@ export const configSchema = z.object({
   WEB_DIR: z.string().min(1).optional(),
   /** The search seam (db/search). `pgroonga` is the FRAME check-5 fallback and needs the custom image. */
   SEARCH_INDEX: z.enum(["trgm", "pgroonga"]).default("trgm"),
-  /** Optional Rust article/content/tag reads; OAuth and the other queries remain here. */
+  /** Optional Rust feed/article/content/tag/AI reads; OAuth and the other queries remain here. */
   BBS_RUST_READ_ORIGIN: z.string().url().optional(),
   /** `false` skips the boot-time CREATE DATABASE probe (db/index.ts ensureDatabase); run `createdb bbs` once instead. */
   BBS_CREATE_DATABASE: z

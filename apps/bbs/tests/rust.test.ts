@@ -11,6 +11,51 @@ import {
 } from "./helpers.ts";
 
 describe("incremental Rust reads", () => {
+  it("delegates feed filters through REST and MCP, restores dates and preserves cursor errors", async () => {
+    const local = fakeLibrary();
+    const wire = JSON.parse(JSON.stringify(await local.articles({ limit: 2 })));
+    const transport = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(wire));
+    const app = await createFakeApp({
+      decorateLibrary: (local) => withRustReads(local, { origin: "http://rust", fetch: transport }),
+    });
+    let client: Awaited<ReturnType<typeof connect>> | undefined;
+    try {
+      const response = await app.fetch(
+        "/api/articles?q=%E6%AD%A5%E5%85%B5&scope=title&group=%E7%A1%AC%E4%BB%B6&limit=2",
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(wire);
+      const requestUrl = transport.mock.calls[0]![0];
+      if (typeof requestUrl !== "string") throw new Error("expected an upstream URL string");
+      const url = new URL(requestUrl);
+      expect(Object.fromEntries(url.searchParams)).toEqual({
+        q: "步兵",
+        scope: "title",
+        group: "硬件",
+        limit: "2",
+      });
+      const fetch = fetchVia(app.app);
+      client = await connect(MCP_RESOURCE, await app.token(), fetch);
+      const page = await client.callTool({ name: "list_articles", arguments: { limit: 2 } });
+      expect(page.isError).toBeFalsy();
+      expect(page.structuredContent).toMatchObject({ articles: [{ id: FAKE.id }, {}] });
+      transport.mockResolvedValueOnce(
+        Response.json(
+          { error: "invalid_cursor", error_description: "unusable cursor" },
+          { status: 400 },
+        ),
+      );
+      const invalid = await app.fetch("/api/articles?cursor=bad");
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toEqual({
+        error: "invalid_cursor",
+        error_description: "unusable cursor",
+      });
+    } finally {
+      await client?.close();
+      await app.close();
+    }
+  });
   it("delegates through REST and authenticated MCP while retaining the read hook and audience checks", async () => {
     const fixture = fakeLibrary();
     const wire = JSON.parse(JSON.stringify(await fixture.article(FAKE.id)));

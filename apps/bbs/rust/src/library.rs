@@ -223,7 +223,7 @@ impl Library {
     }
 }
 
-fn strings(value: Value) -> Vec<String> {
+pub(crate) fn strings(value: Value) -> Vec<String> {
     value
         .as_array()
         .map(|xs| {
@@ -243,7 +243,7 @@ fn optional_date(value: Option<DateTime<Utc>>) -> Option<String> {
 }
 
 // JavaScript \s differs from Rust's is_whitespace (FEFF is included; U+0085 is not).
-fn js_whitespace(ch: char) -> bool {
+pub(crate) fn js_whitespace(ch: char) -> bool {
     ch == '\u{feff}' || (ch != '\u{85}' && ch.is_whitespace())
 }
 pub fn collapse(text: &str) -> String {

@@ -1,10 +1,19 @@
 /** Incremental read delegation. The caller still owns OAuth, refresh requests and errors.
- * Only these four methods move; other reads keep their existing implementation.
+ * Only these five methods move; other reads keep their existing implementation.
  * No browser credentials are forwarded to this anonymous corpus service.
  */
-import type { ArticleDTO, ArticleAiDTO } from "../api/dto.ts";
+import type { ArticleDTO, ArticleAiDTO, ArticlePageDTO, ArticleSummaryDTO } from "../api/dto.ts";
+import { QueryError } from "./types.ts";
 import type { Library } from "./index.ts";
-import type { Article, ArticleId, ArticleLink, ContentFormat, TagIndex } from "./types.ts";
+import type {
+  Article,
+  ArticleId,
+  ArticleLink,
+  ArticleSummary,
+  Cursor,
+  ContentFormat,
+  TagIndex,
+} from "./types.ts";
 
 export function withRustReads(
   local: Library,
@@ -17,6 +26,18 @@ export function withRustReads(
       redirect: "error",
       headers: { accept: path.includes("/content?") ? "*/*" : "application/json" },
     });
+    if (response.status === 400) {
+      const body: unknown = await response.json();
+      if (
+        typeof body === "object" &&
+        body !== null &&
+        "error" in body &&
+        body.error === "invalid_cursor"
+      ) {
+        throw new QueryError("invalid_cursor", "unusable cursor");
+      }
+      throw new Error("BBS Rust read failed (400)");
+    }
     if (response.status === 404) {
       const body: unknown = await response.json();
       if (
@@ -34,6 +55,19 @@ export function withRustReads(
   };
   return {
     ...local,
+    articles: async (query) => {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(query)) {
+        if (value !== undefined) params.set(key, String(value));
+      }
+      const response = await request(`/api/articles?${params.toString()}`);
+      if (!response) throw new Error("BBS Rust feed route is unavailable");
+      const page = (await response.json()) as ArticlePageDTO;
+      return {
+        items: page.items.map(summaryFromWire),
+        nextCursor: page.nextCursor as Cursor | null,
+      };
+    },
     article: async (id) => {
       const response = await request(`/api/articles/${encodeURIComponent(id)}`);
       if (!response) return null;
@@ -72,13 +106,20 @@ function date(raw: string | null): Date | null {
   return value;
 }
 
-function articleFromWire(article: ArticleDTO): Article {
+function summaryFromWire(article: ArticleSummaryDTO): ArticleSummary {
   return {
     ...article,
     id: article.id as ArticleId,
     publishedAt: date(article.publishedAt),
     discoveredAt: date(article.discoveredAt)!,
     fetchedAt: date(article.fetchedAt),
+  };
+}
+
+function articleFromWire(article: ArticleDTO): Article {
+  return {
+    ...article,
+    ...summaryFromWire(article),
     links: article.links.map((link): ArticleLink => ({
       ...link,
       articleId: link.articleId as ArticleId | null,
