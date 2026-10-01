@@ -28,10 +28,11 @@ The application container installs protobuf only in its Rust build stage.
 - WebSocket dial and write times are bounded, and individual WebSocket messages
   and frames are capped at 1 MiB. The SDK expires incomplete Feishu fragments
   after five seconds; aggregate fragment count/bytes remain an upstream gap.
-- The application must disable the SDK tracing target to avoid SDK diagnostics
-  exposing upstream bodies or gateway query strings. BBS adds
-  `larksuite_oapi_sdk_rs=off` after loading `RUST_LOG`. Herkules transport errors
-  remain safe to report separately.
+- The application must unconditionally reject SDK tracing events and spans to
+  avoid diagnostics exposing upstream bodies or gateway query strings. BBS uses
+  a separate target-prefix filter for `larksuite_oapi_sdk_rs`, independent of
+  `RUST_LOG`; more-specific environment directives cannot re-enable SDK logs.
+  Herkules transport errors remain safe to report separately.
 
 Command parsing, cards, mention policy, announcement quotas, receipts, locks,
 leases and retries belong to the application. The crate does not provide
