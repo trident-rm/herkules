@@ -16,6 +16,7 @@ import { sql } from "drizzle-orm";
 
 import { rowsOf } from "../db/index.ts";
 import {
+  botState,
   articleAi,
   articleImages,
   articleLinks,
@@ -46,6 +47,7 @@ export async function getStatus(deps: LibraryDeps): Promise<LibraryStatus> {
         (SELECT count(*)::int FROM ${articleAi} JOIN ${articles} ON ${articles.id} = ${articleAi.articleId} AND ${FETCHED} WHERE ${articleAi.status} = 'ready') AS ai_ready,
         (SELECT count(*)::int FROM ${articles} WHERE ${FETCHED} AND NOT EXISTS (SELECT 1 FROM ${articleAi} WHERE ${articleAi.articleId} = ${articles.id})) AS ai_missing,
         (SELECT count(*)::int FROM ${kbEntities} WHERE ${kbEntities.articleCount} > 0) AS entities,
+        (SELECT ${botState.lastReconciledAt} FROM ${botState} WHERE ${botState.id} = 1) AS bot_reconciled_at,
         (SELECT max(${pollRuns.startedAt}) FROM ${pollRuns}) AS last_checked_at,
         (SELECT max(${sources.backfillCompletedAt}) FROM ${sources}) AS backfill_completed_at,
         (SELECT ${sources.name} FROM ${sources} ORDER BY ${sources.createdAt} LIMIT 1) AS site_name,
@@ -68,6 +70,10 @@ export async function getStatus(deps: LibraryDeps): Promise<LibraryStatus> {
       // Gatus conditions cannot diff timestamps; the status page checks this number (tools/deploy/gatus.yaml).
       lastCheckedAgeSeconds: ageSeconds(date(r?.last_checked_at)),
       backfillCompletedAt: date(r?.backfill_completed_at),
+    },
+    bot: {
+      lastReconciledAt: date(r?.bot_reconciled_at),
+      lastReconciledAgeSeconds: ageSeconds(date(r?.bot_reconciled_at)),
     },
     importedAt: date(r?.imported_at),
   };

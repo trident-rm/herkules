@@ -34,7 +34,7 @@ jobs:
           fi
 
   images:
-    needs: [changes, ready, bbs-rust, new-api, secrets]
+    needs: [changes, ready, bbs-rust, bbs-container, new-api, secrets]
     if: needs.changes.outputs.images == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     permissions:
       actions: read
@@ -43,7 +43,7 @@ jobs:
     uses: ./.github/workflows/image-build.yml
 
   manifest:
-    needs: [images, ready, bbs-rust, new-api, secrets]
+    needs: [images, ready, bbs-rust, bbs-container, new-api, secrets]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -94,11 +94,34 @@ jobs:
         with:
           cache: true
           run-install: true
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       # check + every package's tests (PGlite, fake GitHub: no services) + every build.
       - run: vp run ready
       - run: sh tools/images/caddy.test.sh
+
+  bbs-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build BBS web and preparation images
+        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+        with:
+          source: .
+          files: tools/images/docker-bake.hcl
+          targets: bbs,bbs-web
+          load: true
+          set: |
+            bbs.tags=herkules-bbs-jobs:test
+            bbs-web.tags=herkules-bbs-web:test
+      - name: Verify Rust-only runtime against disposable Postgres
+        run: sh tools/images/bbs-web.test.sh
 
   bbs-rust:
     runs-on: ubuntu-latest
@@ -122,12 +145,23 @@ jobs:
         with:
           cache: true
           run-install: true
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal
       - name: Compare Rust and TypeScript corpus reads
         env:
           BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
         run: vp run @herkules/bbs#test:rust:parity
+      - name: Compare Rust and TypeScript crawler writes
+        env:
+          BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
+        run: vp run "@herkules/bbs#test:rust:crawler"
+
+      - name: Compare Rust and TypeScript bot behavior
+        env:
+          BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
+        run: vp run test:rust:bot
 
   new-api:
     runs-on: ubuntu-latest

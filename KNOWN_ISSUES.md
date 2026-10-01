@@ -393,60 +393,40 @@ null; throw e;`), then redirect only on a settled `null`. This needs a
 
 ## `apps/bbs`
 
-### 27. The bot has no liveness signal while the crawler has one
+### 27. The bot heartbeat has no deployment monitor
 
 - **Where**: `apps/bbs/src/library/status.ts:66` (crawler),
   `apps/bbs/src/bot/store.ts:295` (`last_reconciled_at`), `tools/deploy/gatus.yaml`
 - **Confidence**: confirmed
 - **What**: `bot_state.last_reconciled_at` is refreshed every 30 s by `reconcile()` but
-  never exposed, and the bot container has no port and no real healthcheck. A bot stuck
+  now exposed in `/api/status`, but the deployment has no bot freshness monitor.
+  The bot container has no port and no real healthcheck. A bot stuck
   in a crash loop (for example the announcement-chat mismatch that throws on every boot,
   with `restart: unless-stopped`) is indistinguishable from "no new posts"; the only
   symptom is silence. `/api/status` already carries `crawler.lastCheckedAgeSeconds` for
   exactly this purpose, and gatus watches it.
-- **Fix**: add `bot: { lastReconciledAt, lastReconciledAgeSeconds }` to `LibraryStatus`,
-  fed by one scalar subselect over the one-row table, plus a gatus row mirroring the
-  crawler check.
+- **Fix**: the Node and Rust status adapters now expose `bot: { lastReconciledAt,
+lastReconciledAgeSeconds }` from the one-row table. Add an infrastructure Gatus
+  row mirroring the crawler freshness check; keep this entry until it is deployed.
 
-### 28. Test gap: the crawler's advisory-lock refusal is untested
+---
 
-- **Where**: `apps/bbs/src/crawl/index.ts:49` (`pg_try_advisory_lock`, exit 3); existing
-  real-Postgres block at `apps/bbs/tests/bot.test.ts:715`
-- **Confidence**: confirmed
-- **What**: the README binds "a second worker exits before issuing a source request",
-  enforced by the advisory lock and `WorkerLockHeldError` → exit 3. No test references
-  the error, the crawl lock, or `runWorkCli` with a held lock — the only real-Postgres
-  test exercises the _bot_ lock. This is the single guard against two workers hammering
-  the forum, which is the deployment's stated operational stop condition.
-- **Fix**: in the existing `describe.skipIf(!REAL_POSTGRES)` block, pre-hold the lock on
-  one connection and assert `work()` rejects (or `runWorkCli` returns 3) with a `fetch`
-  that would throw if called.
+## Rust Feishu transport
 
-### 29. A backfill-page listing failure fails the whole poll run
+### 49. SDK fragment reassembly lacks an aggregate resource cap
 
-- **Where**: `apps/bbs/src/crawl/worker.ts:150`; the contract is stated at `:126`
-- **Confidence**: reported
-- **What**: `ThrottledError` breaks the backfill loop but every other `SourceError` is
-  rethrown, so one transient 5xx on page N sets `outcome.error`, marks `poll_runs` failed,
-  skips `markChecked`, and discards the page-1 items already collected. The comment says
-  only a page-1 failure fails the run, and gatus's crawler condition reads that status row,
-  so a flaky backfill page also shows as a crawler stall.
-- **Fix**: catch `SourceError` around the backfill `listPage` and `break`, as the throttle
-  branch already does. `advanceBackfill` only runs on success, so breaking cannot skip a
-  page.
-
-### 30. `discover`'s `introduction` COALESCE is unreachable on the common path
-
-- **Where**: `apps/bbs/src/crawl/corpus.ts:235`
-- **Confidence**: confirmed
-- **What**: the upsert sets `introduction: coalesce(articles.introduction,
-excluded.introduction)` but gates the whole `DO UPDATE` on `listing_position`/`is_pinned`
-  changing. When a re-listing merely supplies a previously NULL introduction — the normal
-  case within a day — the update never runs, so the COALESCE can only fire when something
-  else changed, and `updated_at` is not bumped either.
-- **Fix**: add `OR (articles.introduction IS NULL AND excluded.introduction IS NOT NULL)`
-  to `setWhere`, or drop the COALESCE and document that listings never back-fill
-  introductions.
+- **Where**: `packages/feishu-rust/src/lib.rs` WebSocket wrapper; pinned SDK 0.3.12
+  `ws.rs` `FragEntry::new` and `WsFrameHandler::event_payload`
+- **Confidence**: confirmed in the published dependency source
+- **What**: Herkules bounds individual WebSocket frames/messages at 1 MiB. The SDK
+  expires incomplete fragment entries after five seconds but allocates its fragment
+  vector from the advertised count and has no aggregate count/byte cap. A malformed
+  gateway frame or many concurrent incomplete events can exceed the intended
+  low-memory budget before expiry. This is the provider channel, not a public
+  application WebSocket endpoint.
+- **Fix**: add count/byte limits in the upstream SDK or a bounded Herkules fragment
+  adapter, with malformed-count and incomplete-fragment load fixtures. Keep the SDK
+  pinned until a tested fix is available.
 
 ---
 

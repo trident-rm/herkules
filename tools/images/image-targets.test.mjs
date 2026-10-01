@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { selectImageTargets } from "./image-targets.mjs";
 test("shared UI affects both browser images", () => {
-  assert.deepEqual(selectImageTargets(["packages/ui/src/button.tsx"]).targets, ["bbs", "platform"]);
+  assert.deepEqual(selectImageTargets(["packages/ui/src/button.tsx"]).targets, [
+    "bbs",
+    "bbs-web",
+    "platform",
+  ]);
 });
 test("application routes travel with the platform artifact", () => {
   assert.deepEqual(selectImageTargets(["tools/images/caddy/mcp/bbs.caddy"]).targets, ["platform"]);
@@ -19,7 +23,13 @@ test("lockfile and publication machinery invalidate the complete image tuple", (
     ".github/workflows/image-build.yml",
     "tools/images/image-targets.mjs",
   ]) {
-    assert.deepEqual(selectImageTargets([path]).targets, ["auth", "bbs", "ai", "platform"]);
+    assert.deepEqual(selectImageTargets([path]).targets, [
+      "auth",
+      "bbs",
+      "bbs-web",
+      "ai",
+      "platform",
+    ]);
   }
 });
 test("docs and license changes do not require images; AI source does", () => {
@@ -48,7 +58,8 @@ test("Rust backend and shared auth changes rebuild the BBS runtime", () => {
     "Cargo.lock",
     "apps/bbs/rust/src/http.rs",
     "packages/auth-rust/src/session.rs",
+    "packages/feishu-rust/src/lib.rs",
   ]) {
-    assert.deepEqual(selectImageTargets([path]).targets, ["bbs"]);
+    assert.deepEqual(selectImageTargets([path]).targets, ["bbs", "bbs-web"]);
   }
 });

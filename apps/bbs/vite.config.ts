@@ -18,6 +18,11 @@ export default defineConfig({
   },
   run: {
     tasks: {
+      "test:rust:crawler": {
+        command:
+          "cargo build -p herkules-bbs --locked --bin herkules-bbs --example crawler_probe && node --experimental-strip-types scripts/rust-crawler-parity.ts",
+        cache: false,
+      },
       "test:rust:parity": {
         dependsOn: ["@herkules/auth-middleware#build"],
         command:

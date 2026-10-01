@@ -1,6 +1,8 @@
 pub mod ai;
 pub mod auth;
+pub mod bot;
 pub mod config;
+pub mod crawl;
 pub mod feed;
 pub mod http;
 pub mod kb;
@@ -10,3 +12,4 @@ pub mod reader;
 pub mod search;
 pub mod session;
 pub mod status;
+pub mod web;

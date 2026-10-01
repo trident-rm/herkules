@@ -1,10 +1,10 @@
 # BBS Rust service
 
-Incremental BBS migration to Rust, Askama SSR and Vite-built static assets. The BBS image now packages Rust alongside the existing Node browser/worker implementation. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
+Incremental BBS migration to Rust, Askama SSR and Vite-built static assets. The `bbs-web` image runs only Rust and serves the existing Vite-built browser frontend alongside native REST/MCP/OAuth and the Askama reader. The same Rust image can also run the corpus crawler with `work`. The existing `bbs` image retains Node migrations, import/rederivation, a bot rollback target and a compatible crawler rollback target. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
 
 ## Run
 
-From the repository root, with Rust installed:
+From the repository root, with Rust 1.95+ and a protobuf compiler installed:
 
 ```sh
 vp install
@@ -88,7 +88,7 @@ BBS_RUST_READ_ORIGIN=http://127.0.0.1:3203
 
 Both services must point at the same Postgres corpus. The entity and entity-head adapter query keys work in both anonymous and native-auth Rust modes; already-normalized keys are preserved exactly, including Unicode lowercase expansions. The `Library` adapter delegates all twelve corpus read methods, including both head metadata methods. Node still owns API validation and presentation, OAuth/session checks, MCP transport and token validation, admission, article-refresh hooks, migrations, crawler and bot. Delegation requires `SEARCH_INDEX=trgm`; both Node configuration and Rust startup reject another search index. It sends no browser cookies or bearer tokens to Rust. Upstream errors fail the request; they do not silently switch back to Node. Remove the variable and restart Node to restore all original reads.
 
-This option does not change browser page routing: open the Rust port directly for the SSR preview. Do not replace the production `/articles/*` routes yet, because navigation and reader interaction parity are incomplete.
+This adapter option does not change browser page routing. The separate `bbs-web` image serves the complete web surface directly; full Askama navigation and richer reader widgets remain later UI increments.
 
 ## Native REST, MCP and browser OAuth
 
@@ -111,7 +111,39 @@ Native mode serves `/api/viewer`, guarded `/api/me`, `/login`, `/callback`, POST
 
 Browser login uses the existing confidential client with PKCE, encrypted multi-attempt state, safe return paths, encrypted session cookies and refresh-token rotation. Cookie format and keys match Node, allowing compatible sessions during a staged switch. Concurrent refreshes share an in-flight request; successful rotations are retained briefly for other tabs. Logout clears both cookies and attempts issuer revocation. User profile lookup stays with the existing identity service. Better Auth remains TypeScript; Rust is its OAuth client and resource server.
 
-Native article reads retain the existing best-effort stale-article refresh request. MCP article reads remain read-only. No migration, crawler, AI worker or bot ownership moves in this increment. The standalone Rust port does not serve the SPA or account destination. In the BBS image, Node migrates the corpus, starts the native Rust service on loopback and waits for database readiness before listening. Node proxies REST, MCP, OAuth and hard article navigations to Rust, while keeping the remaining SPA pages and assets. It terminates the container if Rust exits; SIGTERM stops both processes. Workers and bot commands start only Node. Set `BBS_RUST_NATIVE=false` and unset `BBS_RUST_READ_ORIGIN` to use the original Node implementation; deployment rollback selects the prior immutable image. Invalid REST parameter responses preserve status/error codes, but some validation descriptions are generic instead of the Node Zod diagnostic text.
+Native article reads retain the existing best-effort stale-article refresh request. MCP article reads remain read-only. The web service does not start a crawler. Run `work` as a separate process, as described below. No schema or bot ownership moves in this increment.
+
+### Rust-only web image
+
+Build the serving image with `docker build --target bbs-web -t herkules-bbs-web .`.
+It contains the static musl Rust binary, CA certificates and Vite's `dist/client`,
+with a nonroot Rust process as PID 1. It contains no Node runtime or node_modules.
+`BBS_RUST_LISTEN` defaults to `0.0.0.0:3003` **in this image**; the standalone
+binary retains its loopback preview default. Use the existing database/auth
+variables above. `/healthz` checks database readiness, and SIGTERM stops Rust
+gracefully. Vite and Node run only in the build stages.
+
+With `WEB_DIR`, Rust validates and loads the SPA document at startup, serves
+`/assets/*` with immutable caching, and public fonts/favicon/robots with one-hour
+caching. Missing assets never fall through to HTML. Browser feed/search/KB/tags/
+status/account routes use the existing React SPA document with `no-cache`; KB
+entity routes retain escaped metadata and unknown-entity 404s. Article documents
+continue to use Askama. This removes the frontend server runtime without claiming
+complete feed/KB SSR migration.
+
+Before starting Rust, run the existing Node image's `migrate` command as a separate
+one-shot preparation job. It applies the authoritative Drizzle history and
+rederives stale corpus data, then exits. Start Rust only after that job succeeds;
+the crawler can use `bbs-web` with command `work` and the HTTP healthcheck disabled; keep the bot on the Node `bbs` image. Switch only after promoting an application digest that includes Rust `work`. Production Compose and immutable
+release selection live in `herkules-infra`; the coordinated infrastructure change
+adds a preparation dependency and selects the separately published `bbs-web` digest.
+
+The existing `bbs` image still supports supervised hybrid serving and all commands.
+Set `BBS_RUST_NATIVE=false` and unset `BBS_RUST_READ_ORIGIN` for its original Node
+implementation. Rolling back the complete immutable infrastructure release restores
+the previous image/configuration tuple; database migrations are not reversed.
+Invalid REST parameter responses preserve status/error codes, but some validation
+descriptions remain generic instead of the Node Zod diagnostic text.
 
 MCP metadata is generated from the Node contract; regenerate it from `apps/bbs` after intentional tool contract changes:
 
@@ -128,7 +160,7 @@ and cap at 100. Queries use the existing folded `article_search` and `kb_search`
 documents, AND at most eight literal substring terms, and keep date order.
 Cursors use the same base64url JSON tuple as Node, so pages can cross the adapter
 boundary. Invalid cursors preserve the `invalid_cursor` 400 envelope. Every read
-filters out non-fetched articles. The browser feed route is not implemented yet.
+filters out non-fetched articles. The browser feed is served as the existing Vite SPA; Askama feed rendering remains pending.
 
 ## Ranked search and KB contracts
 
@@ -152,14 +184,111 @@ Representative query plans and release-build resource measurements remain cutove
 gates. The existing KB card limit behavior is preserved, including the UI gap
 recorded in `KNOWN_ISSUES.md`.
 
+## Rust crawler
+
+The binary now supports `herkules-bbs work [--once]`. It uses only `DATABASE_URL`
+and `RUST_LOG`: no web listener, Vite assets, OAuth client secrets or identity
+service are needed. It requires a real Postgres database prepared by the existing
+Node `bbs migrate` job. It checks the render/normalize/title versions before any
+write or forum request and refuses a mismatched preparation image.
+
+```sh
+DATABASE_URL="$BBS_POSTGRES_URL" cargo run -p herkules-bbs --locked -- work
+# A bounded manual cycle: discovery, one backfill page, up to ten fetches and five refreshes.
+DATABASE_URL="$BBS_POSTGRES_URL" cargo run -p herkules-bbs --locked -- work --once
+```
+
+`work` runs the discovery and fetch loops under supervision. Discovery runs at
+startup and every ten minutes with up to 30 seconds jitter. Fetch work prioritizes
+reader-requested refreshes, pending/failed articles, then backfill, retaining the
+existing pacing, hourly failed-article retry and minimum body length of 100 Unicode
+characters. It preserves queued refreshes, image captions, link targets, content
+hashes, search documents and unchanged-content timestamps. A failed backfill page
+retains its cursor and no longer discards successful page-one discovery. Listings
+can fill a missing introduction without changing position or pinning.
+
+All requests use the existing fixed source policy: two-second spacing plus up to
+one-second jitter, 20/minute, 2,000/UTC day, a 200-request background reserve, and
+persisted escalating cooldowns. The worker reads and writes the existing
+`source_guard_state` JSON keys. It charges requests durably before sending them;
+waits above 30 seconds become throttled work. Only the public RoboMaster forum
+origin is supported, redirects are refused, response bodies are capped at 5 MiB,
+and requests have a 15-second timeout. Gzip decoding retains the 5 MiB cap on
+decoded content. HTTP client retries and environment proxies are disabled for
+source requests. No source login or AI generation is added.
+The [source blocking stop condition](../README.md#operational-stop-condition)
+continues to apply.
+
+Both daemon and manual runs take the same `0x6262735f` advisory lock as Node on a
+dedicated connection. A second worker exits 3 before boot or source requests. The
+connection is monitored; losing it stops the worker with failure. SIGTERM/SIGINT
+interrupt waits, let daemon work finish its current unit, and release the lock.
+Interrupted poll rows are marked abandoned on the next start. Other failures exit
+1, invalid arguments exit 2, and a clean shutdown exits 0.
+
+The source and corpus modules live under `src/crawl/`, including extraction,
+HTML sanitization, title parsing, and transactions. Ammonia and pulldown-cmark
+replace the Node sanitizer/Markdown libraries. Title parsing uses the same golden
+corpus. Differential tests compare extracted text and resources exactly and HTML
+as equivalent trees, allowing serialization order/void-tag spelling and HTML5's
+implicit table body. Migration ownership remains with Drizzle; no generated SQL
+was changed and there is no second migration history.
+
+To switch production, stop the Node worker, then run the newly promoted `bbs-web`
+image with argument `work`, the existing database URL, and its HTTP healthcheck
+disabled. The worker owns no listening port; existing `/api/status` crawler
+freshness remains the external monitor. The infrastructure worker service needs
+that coordinated image change. To roll back, stop Rust and start the Node `bbs`
+image's `work` command against the same database. Persisted limits, cursors and
+refresh requests are compatible. The bot and preparation jobs continue on Node.
+
 ## Verify
 
 ```sh
 vp run check:rust
 vp run test:rust
+BBS_RUST_TEST_POSTGRES=postgres://bbs_test:password@localhost/postgres \
+vp run "@herkules/bbs#test:rust:crawler"
 # A disposable Postgres server; this account needs CREATEDB.
 BBS_RUST_TEST_POSTGRES=postgres://bbs_test:password@localhost/postgres \
 vp run "@herkules/bbs#test:rust:parity"
 ```
 
 The parity task builds web assets and Rust, creates a uniquely named database, runs the existing migration and fixture loader, compares both implementations on the same rows, checks rendered HTML and CSS, native REST/MCP contracts, cookie interoperability, concurrency/outage behavior, and login/refresh/revocation against a disposable real Better Auth issuer with fake GitHub; stops Rust, and drops only its own database. It does not use the existing corpus database. CI runs parity against Postgres 18; `vp run ready` includes Rust formatting, Clippy and unit tests plus the existing JavaScript checks.
+
+CI also builds both actual release images and runs `sh tools/images/bbs-web.test.sh`
+against a disposable Postgres container. It checks preparation, health, browser
+assets/API, the absence of Node, nonroot Rust PID 1 and graceful shutdown, plus
+the same image in `work` mode with persisted blocking state so it sends no source
+requests. Run it
+locally after building image tags `herkules-bbs-jobs:test` (`bbs`) and
+`herkules-bbs-web:test` (`bbs-web`), or override `BBS_JOBS_TEST_IMAGE` and
+`BBS_WEB_TEST_IMAGE`.
+
+## Feishu bot
+
+Run `cargo run -p herkules-bbs --locked -- bot` with `DATABASE_URL`, `APP_ORIGIN`,
+`FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_ANNOUNCEMENT_CHAT_ID` set. No web
+assets or Herkules browser OAuth configuration are needed. Rust requires a real
+Postgres database and `SEARCH_INDEX=trgm` (the default). Existing migrations must
+finish first; it waits up to 60 seconds for the bot schema. A competing sender
+exits 3 before contacting Feishu. SIGTERM lets a bounded in-flight send finish;
+lock loss stops work and leaves the persisted lease/UUID recoverable.
+
+The bot uses the shared [Feishu transport](../../../packages/feishu-rust/README.md).
+Commands, card schema 2.0, search pagination, menu clicks, quotas/digests and
+transactional receipts/outbox remain BBS policy. The REST status includes
+`bot.lastReconciledAt` and `bot.lastReconciledAgeSeconds`; the infrastructure
+freshness monitor and image selection are a separate promotion change.
+
+Fixture-only migration checks create/drop disposable databases and never send
+real Feishu messages:
+
+```sh
+BBS_RUST_TEST_POSTGRES=postgres://test_user:password@localhost/postgres \
+vp run test:rust:bot
+```
+
+See [bot migration gates](../BOT_MIGRATION.md) for the compatibility checks and
+remaining SDK aggregate-fragment resource limit. Production still uses Node until
+its infrastructure image selection is changed.

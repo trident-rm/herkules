@@ -3,6 +3,8 @@
  * This script creates, seeds and drops its own randomly named database.
  */
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { loadHeadTemplate } from "../src/spa/head.ts";
 import { nativeParity } from "./rust-native-parity.ts";
 import { issuerParity } from "./rust-issuer-parity.ts";
 import { spawn } from "node:child_process";
@@ -341,6 +343,71 @@ try {
   assert.match(await css.text(), /ssr-reader/);
   checks++;
   assert.equal((await fetch(`${origin}/healthz`)).status, 200);
+  checks++;
+  // Rust serves every browser document and public asset without a Node proxy.
+  const indexHtml = await readFile(resolve(root, "apps/bbs/dist/client/index.html"), "utf8");
+  for (const path of [
+    "/",
+    "/feed?q=PID",
+    "/search?q=PID",
+    "/kb",
+    "/tags",
+    "/status",
+    "/account",
+    "/unknown-browser-route",
+  ]) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 200, path);
+    assert.equal(response.headers.get("cache-control"), "no-cache");
+    assert.equal(await response.text(), indexHtml, path);
+    checks++;
+  }
+  const headPage = await fetch(`${origin}/account`, { method: "HEAD" });
+  assert.equal(headPage.status, 200);
+  assert.equal(await headPage.text(), "");
+  checks++;
+  assert.equal((await fetch(`${origin}/account`, { method: "POST" })).status, 405);
+  checks++;
+  for (const path of [
+    "/assets/missing.js",
+    "/fonts/missing.woff2",
+    "/api/not-a-route",
+    "/mcp/not-a-route",
+    "/assets/%2e%2e%2findex.html",
+  ]) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 404, path);
+    assert.notEqual(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
+    assert.deepEqual(
+      await response.json(),
+      { error: "not_found", error_description: "no such route" },
+      path,
+    );
+    checks++;
+  }
+  assert.equal(css.headers.get("cache-control"), "public, max-age=31536000, immutable");
+  const appAsset = /src="(\/assets\/[^"]+\.js)"/.exec(indexHtml)![1];
+  const asset = await fetch(`${origin}${appAsset}`);
+  assert.equal(asset.status, 200);
+  assert.match(asset.headers.get("content-type")!, /javascript/);
+  assert.equal(asset.headers.get("cache-control"), "public, max-age=31536000, immutable");
+  checks++;
+  const robots = await fetch(`${origin}/robots.txt`);
+  assert.equal(robots.status, 200);
+  assert.equal(robots.headers.get("cache-control"), "public, max-age=3600");
+  checks++;
+  for (const name of [...entities.map((entity) => entity.name), "missing", "%"]) {
+    const path = `/kb/${encodeURIComponent(name)}`;
+    const meta = await fixture.library.entityHead(entityKey(name));
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, meta ? 200 : 404);
+    assert.equal(
+      await response.text(),
+      meta ? loadHeadTemplate(indexHtml).render(meta, "https://bbs.example") : indexHtml,
+    );
+    checks++;
+  }
+  assert.equal((await fetch(`${origin}/kb/%`)).status, 404);
   checks++;
   // Adversarial metadata and a plain-text fallback must stay escaped in SSR.
   const edits = postgres(databaseUrl.href, { max: 1 });

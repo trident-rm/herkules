@@ -338,6 +338,7 @@ describe("status()", () => {
         lastCheckedAgeSeconds: expect.any(Number),
         backfillCompletedAt: day(9),
       },
+      bot: { lastReconciledAt: null, lastReconciledAgeSeconds: null },
       importedAt: day(11),
     });
   });

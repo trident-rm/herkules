@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
       - id: rev
         env:
-          TARGETS: '["auth","bbs","ai","platform"]'
+          TARGETS: '["auth","bbs","bbs-web","ai","platform"]'
         run: |
           echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
           echo "bake=$(jq -r 'join(",")' <<<"$TARGETS")" >> "$GITHUB_OUTPUT"
@@ -54,7 +54,7 @@ jobs:
         env:
           METADATA: ${{ steps.bake.outputs.metadata }}
           SHORT_SHA: ${{ steps.rev.outputs.short }}
-          TARGETS: '["auth","bbs","ai","platform"]'
+          TARGETS: '["auth","bbs","bbs-web","ai","platform"]'
         run: |
           mkdir -p image-update
           for target in $(jq -r '.[]' <<<"$TARGETS"); do

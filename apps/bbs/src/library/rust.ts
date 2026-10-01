@@ -143,6 +143,7 @@ export function withRustReads(
       const status = (await response.json()) as LibraryStatusDTO;
       return {
         ...status,
+        bot: { ...status.bot, lastReconciledAt: date(status.bot.lastReconciledAt) },
         importedAt: date(status.importedAt),
         crawler: {
           ...status.crawler,
