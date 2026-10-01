@@ -7,6 +7,10 @@ first consumer is the BBS bot. It wraps the community-maintained
 messages use a small reqwest client to preserve durable UUIDs, frozen content,
 structured error classifications and single-attempt delivery.
 
+The direct Prost 0.13 and Tokio Tungstenite 0.26 dependencies must match the
+versions whose types are exposed by SDK 0.3.12. Upgrade these together with the
+SDK after transport fixtures pass; independent major upgrades are incompatible.
+
 Rust 1.95+ and a protobuf compiler are required for the SDK's build script:
 `brew install protobuf` on macOS or `apt-get install protobuf-compiler` on Debian.
 The application container installs protobuf only in its Rust build stage.

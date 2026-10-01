@@ -8,6 +8,13 @@ updates:
       actions:
         patterns: ["*"]
   - package-ecosystem: cargo
+    # SDK 0.3.12 exposes these dependency types in its public WS interface.
+    # Upgrade them together with the SDK after transport compatibility testing.
+    ignore:
+      - dependency-name: prost
+        versions: [">=0.14"]
+      - dependency-name: tokio-tungstenite
+        versions: [">=0.27"]
     directory: /
     schedule:
       interval: weekly

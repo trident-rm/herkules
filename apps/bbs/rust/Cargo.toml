@@ -10,14 +10,14 @@ license = "MIT OR Apache-2.0"
 herkules-feishu = { path = "../../../packages/feishu-rust" }
 uuid = { version = "1", features = ["v4"] }
 herkules-auth = { path = "../../../packages/auth-rust" }
-base64 = "0.22"
+base64 = "0.23"
 askama = "0.16.1"
 axum = "0.8.9"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
-sqlx = { version = "0.8.6", default-features = false, features = [
+sqlx = { version = "0.9.0", default-features = false, features = [
   "runtime-tokio",
   "tls-rustls-ring",
   "postgres",
@@ -25,7 +25,7 @@ sqlx = { version = "0.8.6", default-features = false, features = [
   "json",
 ] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync"] }
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.7", features = ["fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
@@ -37,11 +37,12 @@ rmcp = { version = "3.5.0", default-features = false, features = [
 tower = { version = "0.5", features = ["util"] }
 
 ammonia = "4.2"
-scraper = "0.26"
+scraper = "0.27"
 ego-tree = "0.11"
 pulldown-cmark = "0.13"
-sha2 = "0.10"
-rand = "0.8"
+sha2 = "0.11"
+hex = "0.4"
+rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = [
   "json",
   "rustls",

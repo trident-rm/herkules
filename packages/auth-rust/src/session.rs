@@ -17,7 +17,7 @@ use futures_util::{
     future::{BoxFuture, Shared},
 };
 use hkdf::Hkdf;
-use rand::{RngCore, rngs::OsRng};
+use rand::{TryRng, rngs::SysRng};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(test)]
@@ -207,7 +207,7 @@ impl Jar {
         let plain = self
             .cipher(purpose)
             .decrypt(
-                Nonce::from_slice(&bytes[..12]),
+                &Nonce::try_from(&bytes[..12]).ok()?,
                 Payload {
                     msg: &bytes[12..],
                     aad: purpose.as_bytes(),
@@ -218,12 +218,14 @@ impl Jar {
     }
     fn seal<T: Serialize>(&self, purpose: &str, value: &T) -> String {
         let mut iv = [0; 12];
-        OsRng.fill_bytes(&mut iv);
+        SysRng
+            .try_fill_bytes(&mut iv)
+            .expect("OS entropy unavailable");
         let plain = serde_json::to_vec(value).unwrap();
         let ct = self
             .cipher(purpose)
             .encrypt(
-                Nonce::from_slice(&iv),
+                &Nonce::from(iv),
                 Payload {
                     msg: &plain,
                     aad: purpose.as_bytes(),
@@ -508,7 +510,9 @@ impl Auth {
         let mut attempts = self.jar.attempts(headers);
         let random = || {
             let mut bytes = [0; 32];
-            OsRng.fill_bytes(&mut bytes);
+            SysRng
+                .try_fill_bytes(&mut bytes)
+                .expect("OS entropy unavailable");
             URL_SAFE_NO_PAD.encode(bytes)
         };
         let attempt = Attempt {
