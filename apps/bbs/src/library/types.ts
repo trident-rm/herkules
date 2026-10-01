@@ -356,6 +356,10 @@ export interface LibraryStatus {
     readonly lastCheckedAgeSeconds: number | null;
     readonly backfillCompletedAt: Date | null;
   };
+  readonly bot: {
+    readonly lastReconciledAt: Date | null;
+    readonly lastReconciledAgeSeconds: number | null;
+  };
   /** From `import_runs`: when this corpus arrived. Replaces rm-wenku's live SSE console. */
   readonly importedAt: Date | null;
 }

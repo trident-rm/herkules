@@ -94,6 +94,8 @@ jobs:
         with:
           cache: true
           run-install: true
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       # check + every package's tests (PGlite, fake GitHub: no services) + every build.
@@ -143,6 +145,8 @@ jobs:
         with:
           cache: true
           run-install: true
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal
       - name: Compare Rust and TypeScript corpus reads
@@ -153,6 +157,11 @@ jobs:
         env:
           BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
         run: vp run "@herkules/bbs#test:rust:crawler"
+
+      - name: Compare Rust and TypeScript bot behavior
+        env:
+          BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
+        run: vp run test:rust:bot
 
   new-api:
     runs-on: ubuntu-latest

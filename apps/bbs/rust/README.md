@@ -1,10 +1,10 @@
 # BBS Rust service
 
-Incremental BBS migration to Rust, Askama SSR and Vite-built static assets. The `bbs-web` image runs only Rust and serves the existing Vite-built browser frontend alongside native REST/MCP/OAuth and the Askama reader. The same Rust image can also run the corpus crawler with `work`. The existing `bbs` image retains Node migrations, import/rederivation, the Feishu bot and a compatible crawler rollback target. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
+Incremental BBS migration to Rust, Askama SSR and Vite-built static assets. The `bbs-web` image runs only Rust and serves the existing Vite-built browser frontend alongside native REST/MCP/OAuth and the Askama reader. The same Rust image can also run the corpus crawler with `work`. The existing `bbs` image retains Node migrations, import/rederivation, a bot rollback target and a compatible crawler rollback target. See the [migration sequence](../MIGRATION.md) for scope and cutover gates.
 
 ## Run
 
-From the repository root, with Rust installed:
+From the repository root, with Rust 1.95+ and a protobuf compiler installed:
 
 ```sh
 vp install
@@ -264,3 +264,31 @@ requests. Run it
 locally after building image tags `herkules-bbs-jobs:test` (`bbs`) and
 `herkules-bbs-web:test` (`bbs-web`), or override `BBS_JOBS_TEST_IMAGE` and
 `BBS_WEB_TEST_IMAGE`.
+
+## Feishu bot
+
+Run `cargo run -p herkules-bbs --locked -- bot` with `DATABASE_URL`, `APP_ORIGIN`,
+`FEISHU_APP_ID`, `FEISHU_APP_SECRET`, and `FEISHU_ANNOUNCEMENT_CHAT_ID` set. No web
+assets or Herkules browser OAuth configuration are needed. Rust requires a real
+Postgres database and `SEARCH_INDEX=trgm` (the default). Existing migrations must
+finish first; it waits up to 60 seconds for the bot schema. A competing sender
+exits 3 before contacting Feishu. SIGTERM lets a bounded in-flight send finish;
+lock loss stops work and leaves the persisted lease/UUID recoverable.
+
+The bot uses the shared [Feishu transport](../../../packages/feishu-rust/README.md).
+Commands, card schema 2.0, search pagination, menu clicks, quotas/digests and
+transactional receipts/outbox remain BBS policy. The REST status includes
+`bot.lastReconciledAt` and `bot.lastReconciledAgeSeconds`; the infrastructure
+freshness monitor and image selection are a separate promotion change.
+
+Fixture-only migration checks create/drop disposable databases and never send
+real Feishu messages:
+
+```sh
+BBS_RUST_TEST_POSTGRES=postgres://test_user:password@localhost/postgres \
+vp run test:rust:bot
+```
+
+See [bot migration gates](../BOT_MIGRATION.md) for the compatibility checks and
+remaining SDK aggregate-fragment resource limit. Production still uses Node until
+its infrastructure image selection is changed.

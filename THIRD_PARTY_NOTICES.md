@@ -10,6 +10,9 @@ Third-party materials retain their own licenses and attribution requirements.
   local changes. Preserve the upstream license and notices in that source archive;
   the root dual license does not replace them. The modified source is distributed
   as `portal-source.tar.gz`; see [the build documentation](tools/ai/new-api/README.md).
+- `services/feishu/src/catalog.generated.ts`: selected schema definitions from
+  `@larksuiteoapi/lark-mcp` 0.5.1, copyright 2025 Lark Technologies Pte. Ltd.,
+  under the MIT license preserved in `services/feishu/UPSTREAM_LICENSE`.
 - Dependencies and container base images retain their own licenses. Their resolved
   versions are recorded in `pnpm-lock.yaml`, the Dockerfile and the portal build.
 

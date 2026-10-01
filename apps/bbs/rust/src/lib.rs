@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod auth;
+pub mod bot;
 pub mod config;
 pub mod crawl;
 pub mod feed;

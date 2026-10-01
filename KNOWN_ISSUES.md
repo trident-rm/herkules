@@ -393,20 +393,40 @@ null; throw e;`), then redirect only on a settled `null`. This needs a
 
 ## `apps/bbs`
 
-### 27. The bot has no liveness signal while the crawler has one
+### 27. The bot heartbeat has no deployment monitor
 
 - **Where**: `apps/bbs/src/library/status.ts:66` (crawler),
   `apps/bbs/src/bot/store.ts:295` (`last_reconciled_at`), `tools/deploy/gatus.yaml`
 - **Confidence**: confirmed
 - **What**: `bot_state.last_reconciled_at` is refreshed every 30 s by `reconcile()` but
-  never exposed, and the bot container has no port and no real healthcheck. A bot stuck
+  now exposed in `/api/status`, but the deployment has no bot freshness monitor.
+  The bot container has no port and no real healthcheck. A bot stuck
   in a crash loop (for example the announcement-chat mismatch that throws on every boot,
   with `restart: unless-stopped`) is indistinguishable from "no new posts"; the only
   symptom is silence. `/api/status` already carries `crawler.lastCheckedAgeSeconds` for
   exactly this purpose, and gatus watches it.
-- **Fix**: add `bot: { lastReconciledAt, lastReconciledAgeSeconds }` to `LibraryStatus`,
-  fed by one scalar subselect over the one-row table, plus a gatus row mirroring the
-  crawler check.
+- **Fix**: the Node and Rust status adapters now expose `bot: { lastReconciledAt,
+lastReconciledAgeSeconds }` from the one-row table. Add an infrastructure Gatus
+  row mirroring the crawler freshness check; keep this entry until it is deployed.
+
+---
+
+## Rust Feishu transport
+
+### 49. SDK fragment reassembly lacks an aggregate resource cap
+
+- **Where**: `packages/feishu-rust/src/lib.rs` WebSocket wrapper; pinned SDK 0.3.12
+  `ws.rs` `FragEntry::new` and `WsFrameHandler::event_payload`
+- **Confidence**: confirmed in the published dependency source
+- **What**: Herkules bounds individual WebSocket frames/messages at 1 MiB. The SDK
+  expires incomplete fragment entries after five seconds but allocates its fragment
+  vector from the advertised count and has no aggregate count/byte cap. A malformed
+  gateway frame or many concurrent incomplete events can exceed the intended
+  low-memory budget before expiry. This is the provider channel, not a public
+  application WebSocket endpoint.
+- **Fix**: add count/byte limits in the upstream SDK or a bounded Herkules fragment
+  adapter, with malformed-count and incomplete-fragment load fixtures. Keep the SDK
+  pinned until a tested fix is available.
 
 ---
 
