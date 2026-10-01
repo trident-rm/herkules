@@ -1,6 +1,5 @@
 import { Client as LarkClient } from "@larksuiteoapi/node-sdk";
-import { AllTools } from "@larksuiteoapi/lark-mcp/dist/mcp-tool/tools/index.js";
-import { presetTools } from "@larksuiteoapi/lark-mcp/dist/mcp-tool/constants.js";
+import { selectedTools, userToolNames, botToolNames } from "./catalog.generated.ts";
 import { filterTools } from "@larksuiteoapi/lark-mcp/dist/mcp-tool/utils/filter-tools.js";
 import { TokenMode } from "@larksuiteoapi/lark-mcp/dist/mcp-tool/types/index.js";
 import { larkOapiHandler } from "@larksuiteoapi/lark-mcp/dist/mcp-tool/utils/handler.js";
@@ -22,19 +21,13 @@ export function createTools(config: Config, grants: Grants) {
     appSecret: config.FEISHU_APP_SECRET,
     logger: quiet,
   });
-  const user = filterTools(AllTools, {
+  const user = filterTools(selectedTools, {
     tokenMode: TokenMode.USER_ACCESS_TOKEN,
-    allowTools: [...presetTools["preset.default"], ...presetTools["preset.calendar.default"]],
+    allowTools: userToolNames,
   });
-  const bot = filterTools(AllTools, {
+  const bot = filterTools(selectedTools, {
     tokenMode: TokenMode.TENANT_ACCESS_TOKEN,
-    allowTools: [
-      "im.v1.message.create",
-      "im.v1.message.list",
-      "im.v1.chat.create",
-      "im.v1.chat.list",
-      "contact.v3.user.batchGetId",
-    ],
+    allowTools: botToolNames,
   });
 
   return (subject: string) => {

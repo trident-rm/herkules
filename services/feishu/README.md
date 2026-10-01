@@ -3,7 +3,9 @@
 Team connector at `https://herkules.dev/mcp/feishu`, using the official
 `@larksuiteoapi/lark-mcp` tool definitions and handlers. Herkules authenticates
 remote MCP clients; Feishu separately authorizes each member's upstream data.
-The upstream localhost-only OAuth server is not exposed.
+The upstream localhost-only OAuth server is not exposed. Runtime loads only the
+selected hosted tool schemas; the full official catalog is used for generation
+and parity tests. See [memory reduction and Rust migration](MIGRATION.md).
 
 ## Commands
 
@@ -12,6 +14,8 @@ vp install
 vp run @herkules/feishu#build
 vp run @herkules/feishu#test
 vp check
+vp run "@herkules/feishu#generate:catalog"  # after changing/upgrading the catalog
+vp run "@herkules/feishu#benchmark:catalog" # isolated import-memory comparison
 ```
 
 Copy `.env.example` to `.env` for local operation; `vp run dev` does not start this

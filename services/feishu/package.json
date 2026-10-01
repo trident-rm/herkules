@@ -11,7 +11,9 @@
     "dev": "node --watch --env-file=.env src/main.ts",
     "build": "vp pack",
     "test": "vp test",
-    "check": "vp check"
+    "check": "vp check",
+    "generate:catalog": "node scripts/generate-catalog.mjs",
+    "benchmark:catalog": "node scripts/benchmark-catalog.mjs"
   },
   "dependencies": {
     "@herkules/auth-middleware": "workspace:*",
