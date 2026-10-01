@@ -30,7 +30,13 @@ behaviors, not simply adding the dependency.
 prototype: its published source has WebSocket ready/disconnect callbacks, raw
 handlers that return errors, failure acknowledgements, expiring fragments,
 caller-supplied message UUIDs and configurable HTTP retries. Use raw single-attempt
-API calls with `max_retries(0)` rather than channel chunking/fallback behavior.
+API calls with `max_retries(1)` rather than channel chunking/fallback behavior.
+In SDK 0.3.12 this setting counts total attempts: zero makes no API request; one
+allows exactly one attempt. Herkules outbound delivery uses reqwest with retries
+disabled independently.
+In SDK 0.3.12 this setting counts total attempts: zero makes no API request; one
+allows exactly one attempt. Herkules outbound delivery uses reqwest with retries
+disabled independently.
 It requires Rust 1.95, above BBS's declared 1.88 minimum; adoption therefore needs
 an explicit minimum-version update and build/image verification. Its generated
 service surface and fragment resource bounds still need a compile/RSS and failure
