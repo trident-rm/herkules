@@ -146,7 +146,7 @@ export async function runCycle(
       try {
         page = await source.listPage(w.nextPage, BACKFILL_PAGE_SIZE, "background");
       } catch (e) {
-        if (e instanceof ThrottledError) break;
+        if (e instanceof ThrottledError || SourceError.is(e)) break;
         throw e;
       }
       listed.push(...page.items);

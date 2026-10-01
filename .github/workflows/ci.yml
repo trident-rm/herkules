@@ -149,6 +149,10 @@ jobs:
         env:
           BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
         run: vp run @herkules/bbs#test:rust:parity
+      - name: Compare Rust and TypeScript crawler writes
+        env:
+          BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
+        run: vp run "@herkules/bbs#test:rust:crawler"
 
   new-api:
     runs-on: ubuntu-latest

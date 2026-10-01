@@ -232,7 +232,7 @@ export function createCorpus(db: BbsDb, sourceId: SourceId): Corpus {
                 introduction: sql`coalesce(${articles.introduction}, excluded.introduction)`,
                 updatedAt: sql`excluded.updated_at`,
               },
-              setWhere: sql`${articles.listingPosition} <> excluded.listing_position OR ${articles.isPinned} <> excluded.is_pinned`,
+              setWhere: sql`${articles.listingPosition} <> excluded.listing_position OR ${articles.isPinned} <> excluded.is_pinned OR (${articles.introduction} IS NULL AND excluded.introduction IS NOT NULL)`,
             })
             .returning({ id: articles.id, inserted: sql<boolean>`(xmax = 0)` });
           const row = rows[0];

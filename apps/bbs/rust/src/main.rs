@@ -15,6 +15,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "work") {
+        let code = herkules_bbs::crawl::cli(&args[1..]).await;
+        std::process::exit(i32::from(code));
+    }
+    if !args.is_empty() {
+        return Err(std::io::Error::other("usage: herkules-bbs [work [--once]]").into());
+    }
     let config = Config::from_env().map_err(std::io::Error::other)?;
     let pool = PgPoolOptions::new()
         .min_connections(0)

@@ -1,8 +1,20 @@
 # RM 文库
 
-`@herkules/bbs` is the archive and search application at `https://bbs.herkules.dev`. One Hono process serves the API, the MCP endpoint, browser OAuth routes, the built TanStack SPA, and page metadata. It stores the corpus in its own Postgres database. The crawler and Feishu bot run from the same image as separate `work` and `bot` commands.
+`@herkules/bbs` is the archive and search application at `https://bbs.herkules.dev`.
+The production `bbs-web` image runs Rust Axum for the API, MCP, browser OAuth,
+Askama article reader and Vite-built React assets. It stores the corpus in its
+own Postgres database. The crawler now has a Rust `work` command in the same
+image; the Node `bbs` image retains the crawler for rollback and owns migrations,
+import/rederivation and the Feishu bot. Production worker selection is coordinated
+in `herkules-infra`.
 
-An incremental Rust + Askama SSR migration is underway; all corpus reads can now run alongside Hono through an opt-in adapter. The production image enables native Rust REST/MCP and browser OAuth/session handling through a supervised loopback service. The separate `bbs-web` target now serves all web traffic directly from Rust, including Vite-built SPA assets; the existing `bbs` target retains jobs/migrations and hybrid rollback. Production cutover requires the coordinated infrastructure release. Complete SSR navigation and writer migration remain pending. See the [migration sequence](MIGRATION.md) and [Rust run/test instructions](rust/README.md). Better Auth remains unchanged.
+The Node `bbs` image also retains supervised Rust/Hono hybrid serving for rollback.
+Rust implements the crawler and its transactional corpus writer, with fixture
+parity checks; production worker cutover requires the matching infrastructure
+image promotion. Complete SSR navigation, import/rederivation and bot migration
+remain pending. See the [migration sequence](MIGRATION.md) and
+[Rust run/test instructions](rust/README.md). Better Auth remains the identity
+service.
 
 The web UI has its own README, owned separately: [`web/README.md`](web/README.md).
 
