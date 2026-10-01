@@ -48,6 +48,9 @@ Rerun the same directory to resume an interrupted export. The command refreshes 
 
 ## Feishu bot
 
+The bot is still Node; [Rust migration gates](BOT_MIGRATION.md) record transport,
+delivery-parity and cutover requirements.
+
 `bbs bot` connects an internal self-built Feishu app through a WebSocket long connection. It has
 no public callback route. Replies are interactive cards (card schema 2.0); the command table in
 `src/bot/command.ts` is what `/help` renders and what the bot menu resolves against:
