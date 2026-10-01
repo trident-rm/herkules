@@ -19,6 +19,7 @@ infrastructure repository.
 | [`packages/auth-middleware`](packages/auth-middleware/README.md) | Resource-server JWT verification and OAuth challenge helpers                               |
 | [`packages/oauth-client`](packages/oauth-client/README.md)       | Stateless first-party browser OAuth sessions for Hono apps                                 |
 | [`packages/auth-rust`](packages/auth-rust/README.md)             | Shared Rust token verification and first-party OAuth sessions                              |
+| [`packages/feishu-rust`](packages/feishu-rust/README.md)         | Shared Rust Feishu transport for bots and future connector reuse                           |
 | [`packages/ui`](packages/ui/README.md)                           | Shared source CSS and React components                                                     |
 | [`tools/images`](tools/images/README.md)                         | Application images and Caddy route fragments                                               |
 

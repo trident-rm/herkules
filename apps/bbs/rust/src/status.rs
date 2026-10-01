@@ -18,8 +18,14 @@ impl Library {
                 .round()
                 .max(0.0) as i64
         });
+        let bot = r.try_get::<Option<DateTime<Utc>>, _>("bot_reconciled_at")?;
+        let bot_age = bot.map(|d| {
+            ((Utc::now().timestamp_millis() - d.timestamp_millis()) as f64 / 1000.0)
+                .round()
+                .max(0.0) as i64
+        });
         Ok(
-            json!({"site":{"name":r.try_get::<Option<String>,_>("site_name")?.unwrap_or_else(|| "RM 论坛".into()),"url":r.try_get::<Option<String>,_>("site_url")?.unwrap_or_default()},"articles":{"total":n("total")?,"fetched":n("fetched")?,"skipped":n("skipped")?,"tags":n("tags")?,"images":n("images")?,"links":n("links")?},"ai":{"ready":n("ai_ready")?,"missing":n("ai_missing")?,"entities":n("entities")?},"crawler":{"lastCheckedAt":last.map(iso),"lastCheckedAgeSeconds":age,"backfillCompletedAt":date("backfill_completed_at")?},"importedAt":date("imported_at")?}),
+            json!({"site":{"name":r.try_get::<Option<String>,_>("site_name")?.unwrap_or_else(|| "RM 论坛".into()),"url":r.try_get::<Option<String>,_>("site_url")?.unwrap_or_default()},"articles":{"total":n("total")?,"fetched":n("fetched")?,"skipped":n("skipped")?,"tags":n("tags")?,"images":n("images")?,"links":n("links")?},"ai":{"ready":n("ai_ready")?,"missing":n("ai_missing")?,"entities":n("entities")?},"crawler":{"lastCheckedAt":last.map(iso),"lastCheckedAgeSeconds":age,"backfillCompletedAt":date("backfill_completed_at")?},"bot":{"lastReconciledAt":bot.map(iso),"lastReconciledAgeSeconds":bot_age},"importedAt":date("imported_at")?}),
         )
     }
     pub async fn head(&self, id: &str) -> Result<Option<Value>, sqlx::Error> {

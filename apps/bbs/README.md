@@ -5,14 +5,14 @@ The production `bbs-web` image runs Rust Axum for the API, MCP, browser OAuth,
 Askama article reader and Vite-built React assets. It stores the corpus in its
 own Postgres database. The crawler now has a Rust `work` command in the same
 image; the Node `bbs` image retains the crawler for rollback and owns migrations,
-import/rederivation and the Feishu bot. Production worker selection is coordinated
+import/rederivation and a bot rollback target. Production worker selection is coordinated
 in `herkules-infra`.
 
 The Node `bbs` image also retains supervised Rust/Hono hybrid serving for rollback.
 Rust implements the crawler and its transactional corpus writer, with fixture
 parity checks; production worker cutover requires the matching infrastructure
-image promotion. Complete SSR navigation, import/rederivation and bot migration
-remain pending. See the [migration sequence](MIGRATION.md) and
+image promotion. Complete SSR navigation and import/rederivation remain pending; the Rust bot
+implementation awaits its separate production image switch. See the [migration sequence](MIGRATION.md) and
 [Rust run/test instructions](rust/README.md). Better Auth remains the identity
 service.
 
@@ -48,8 +48,10 @@ Rerun the same directory to resume an interrupted export. The command refreshes 
 
 ## Feishu bot
 
-The bot is still Node; [Rust migration gates](BOT_MIGRATION.md) record transport,
-delivery-parity and cutover requirements.
+The Rust image supports `herkules-bbs bot`; production still selects the Node
+bot until the infrastructure switch. [Rust migration gates](BOT_MIGRATION.md)
+record parity and cutover requirements. Both runtimes use the same Postgres tables,
+lock and persisted delivery UUIDs.
 
 `bbs bot` connects an internal self-built Feishu app through a WebSocket long connection. It has
 no public callback route. Replies are interactive cards (card schema 2.0); the command table in

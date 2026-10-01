@@ -35,6 +35,7 @@ const STATUS: LibraryStatusDTO = {
     lastCheckedAgeSeconds: 3600,
     backfillCompletedAt: "2026-05-01T00:00:00.000Z",
   },
+  bot: { lastReconciledAt: null, lastReconciledAgeSeconds: null },
   importedAt: "2026-08-28T01:00:00.000Z",
 };
 

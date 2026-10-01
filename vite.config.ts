@@ -27,6 +27,11 @@ export default defineConfig({
           "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
         cache: false,
       },
+      "test:rust:bot": {
+        command:
+          "cargo build -p herkules-bbs --bin herkules-bbs --example bot_probe --example bot_worker_fixture --locked && node apps/bbs/scripts/rust-bot-parity.ts",
+        cache: false,
+      },
       "test:rust": { command: "cargo test --workspace --locked", cache: false },
       // The whole local stack without Docker, five processes at once:
       //   :3000  services/web   the PUBLIC origin; its Vite server proxies /auth and /.well-known

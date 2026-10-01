@@ -1,7 +1,9 @@
 # Rust Feishu bot migration gates
 
-The deployed bot is still Node. This plan preserves the behavior in the BBS README
-and `src/bot/`; it does not change announcement or delivery policy.
+The Rust bot command and shared transport are implemented; the deployed bot is
+still Node until an infrastructure promotion selects the Rust image. This sequence
+preserves the behavior in the BBS README and `src/bot/`, including announcement
+and delivery policy.
 
 ## Shape and reuse
 
@@ -26,21 +28,17 @@ for the current first-connected baseline rule. Its fragment cleanup retains ever
 entry instead of expiring incomplete messages. Reuse requires addressing those
 behaviors, not simply adding the dependency.
 
-`larksuite-oapi-sdk-rs` 0.3.12 is a stronger candidate for the first transport
-prototype: its published source has WebSocket ready/disconnect callbacks, raw
-handlers that return errors, failure acknowledgements, expiring fragments,
-caller-supplied message UUIDs and configurable HTTP retries. Use raw single-attempt
-API calls with `max_retries(1)` rather than channel chunking/fallback behavior.
-In SDK 0.3.12 this setting counts total attempts: zero makes no API request; one
-allows exactly one attempt. Herkules outbound delivery uses reqwest with retries
-disabled independently.
-In SDK 0.3.12 this setting counts total attempts: zero makes no API request; one
-allows exactly one attempt. Herkules outbound delivery uses reqwest with retries
-disabled independently.
-It requires Rust 1.95, above BBS's declared 1.88 minimum; adoption therefore needs
-an explicit minimum-version update and build/image verification. Its generated
-service surface and fragment resource bounds still need a compile/RSS and failure
-fixture check before selection. Neither candidate has been added to Cargo yet.
+The shared `herkules-feishu` transport pins the community-maintained,
+unofficial `larksuite-oapi-sdk-rs` 0.3.12 for raw WebSocket events. It provides
+ready/disconnect callbacks, fallible admission handlers, failure acknowledgements
+and fragment expiry. Individual frame/message caps are enforced by Herkules;
+aggregate fragment bounds remain a tracked gap in `KNOWN_ISSUES.md` entry 49.
+
+Outbound delivery uses reqwest with automatic retries disabled, preserving frozen
+content and persisted UUIDs. For SDK raw API calls, `max_retries(1)` allows exactly
+one attempt; in 0.3.12 zero makes no API request. A direct regression fixture
+verifies that behavior. The workspace minimum is now Rust 1.95, matching the
+SDK, with protobuf installed only in the container build stage.
 
 A transport must provide:
 

@@ -12,7 +12,9 @@ use sqlx::postgres::PgPoolOptions;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info".into())
+                .add_directive("larksuite_oapi_sdk_rs=off".parse()?),
         )
         .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -20,8 +22,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let code = herkules_bbs::crawl::cli(&args[1..]).await;
         std::process::exit(i32::from(code));
     }
+    if args.first().is_some_and(|a| a == "bot") {
+        match herkules_bbs::bot::cli::run(&args[1..]).await {
+            Ok(code) => std::process::exit(i32::from(code)),
+            Err(error) => {
+                tracing::error!(%error, "bot failed");
+                std::process::exit(1);
+            }
+        }
+    }
     if !args.is_empty() {
-        return Err(std::io::Error::other("usage: herkules-bbs [work [--once]]").into());
+        return Err(std::io::Error::other("usage: herkules-bbs [work [--once] | bot]").into());
     }
     let config = Config::from_env().map_err(std::io::Error::other)?;
     let pool = PgPoolOptions::new()

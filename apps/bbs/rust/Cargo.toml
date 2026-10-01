@@ -2,11 +2,13 @@
 name = "herkules-bbs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+herkules-feishu = { path = "../../../packages/feishu-rust" }
+uuid = { version = "1", features = ["v4"] }
 herkules-auth = { path = "../../../packages/auth-rust" }
 base64 = "0.22"
 askama = "0.16.1"
@@ -48,4 +50,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+axum = { version = "0.8.9", features = ["ws"] }
+prost = "0.13"
+larksuite-oapi-sdk-rs = { version = "=0.3.12", features = ["ws"] }
 flate2 = "1"

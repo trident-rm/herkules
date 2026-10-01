@@ -27,7 +27,8 @@ export function selectImageTargets(paths, { all = false } = {}) {
     if (
       ["Cargo.toml", "Cargo.lock"].includes(path) ||
       path.startsWith("apps/bbs/rust/") ||
-      path.startsWith("packages/auth-rust/")
+      path.startsWith("packages/auth-rust/") ||
+      path.startsWith("packages/feishu-rust/")
     )
       add("bbs", "bbs-web");
     if (nodeBuildInputs.has(path) || path.startsWith("tsconfig")) add(...allTargets);
