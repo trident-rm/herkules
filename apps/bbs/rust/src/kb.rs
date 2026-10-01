@@ -77,7 +77,7 @@ fn array(key: &str) -> String {
     )
 }
 const FROM: &str = " FROM article_ai JOIN articles ON articles.id = article_ai.article_id";
-fn filters(sql: &mut QueryBuilder<'_, Postgres>, q: &ValidKb, skip: &str) {
+fn filters(sql: &mut QueryBuilder<Postgres>, q: &ValidKb, skip: &str) {
     sql.push(" WHERE article_ai.status = 'ready' AND articles.status = 'fetched'");
     for (axis, key, value) in [
         ("domain", "domain", &q.domain),

@@ -41,7 +41,7 @@ pub struct Outcome {
     pub error: Option<String>,
 }
 pub fn hash(s: &str) -> String {
-    format!("{:x}", Sha256::digest(s.as_bytes()))
+    hex::encode(Sha256::digest(s.as_bytes()))
 }
 pub fn id(now: DateTime<Utc>) -> String {
     const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";

@@ -13,7 +13,7 @@ pub struct Payload {
 }
 pub fn freeze(value: Value) -> Payload {
     let content = value.to_string();
-    let hash = format!("{:x}", Sha256::digest(format!("interactive\0{content}")));
+    let hash = hex::encode(Sha256::digest(format!("interactive\0{content}")));
     Payload {
         msg_type: "interactive".into(),
         content,

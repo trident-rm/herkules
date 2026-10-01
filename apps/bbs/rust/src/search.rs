@@ -218,7 +218,7 @@ impl Library {
         score.push(",0)::double precision");
         // Keep score parameters first when wrapping its expression in the full
         // statement, then append all remaining bindings to the same builder.
-        let expression = score.sql().to_owned();
+        let expression = score.sql().as_str().to_owned();
         let projection = include_str!("sql/feed.sql")
             .split("\nFROM articles")
             .next()
