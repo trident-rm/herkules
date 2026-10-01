@@ -556,8 +556,17 @@ try {
         await raw[1]!`SELECT pg_terminate_backend(${locks[0]!.pid})`;
         same((await Promise.race([exit, deadline]))[0], 1, "lost lock terminates worker");
       }
-      const released = await raw[1]!`SELECT pg_try_advisory_lock(${0x42425342}) AS acquired`;
-      same(released[0]!.acquired, true, "worker releases singleton lock");
+      clearTimeout(timer);
+      // The worker deadline remains strict. PostgreSQL observes the socket's
+      // disconnect asynchronously after the child exits, especially on Linux.
+      const releaseDeadline = performance.now() + 5000;
+      let acquired = false;
+      do {
+        acquired = (await raw[1]!`SELECT pg_try_advisory_lock(${0x42425342}) AS acquired`)[0]!
+          .acquired;
+        if (!acquired) await new Promise((resolve) => setTimeout(resolve, 25));
+      } while (!acquired && performance.now() < releaseDeadline);
+      same(acquired, true, "worker releases singleton lock");
       await raw[1]!`SELECT pg_advisory_unlock(${0x42425342})`;
     } finally {
       clearTimeout(timer);
