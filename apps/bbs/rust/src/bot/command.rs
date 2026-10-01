@@ -139,6 +139,8 @@ pub fn action(mut value: Value) -> Option<Action> {
     }
     value["v"] = json!(1);
     let a: Action = serde_json::from_value(value).ok()?;
+    // Pinned Zod 4 counts code points for string min/max, unlike the manual
+    // command parser's JavaScript `.length` checks (UTF-16 units).
     if a.v != 1
         || a.cmd != "search"
         || a.q.chars().count() == 0

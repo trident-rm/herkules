@@ -188,10 +188,15 @@ pub async fn run_with(
         loop {
             tokio::select! {_ = lock_quit.changed()=>break,_ = ticker.tick()=>{if !matches!(tokio::time::timeout(Duration::from_secs(5),sqlx::query("SELECT 1").execute(&mut lock)).await,Ok(Ok(_))){let _=lost_tx.send(true);break;}}}
         }
-        let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
-            .bind(LOCK)
-            .execute(&mut lock)
-            .await;
+        // A cancelled health check may leave this session unreachable. Cleanup
+        // must not keep the process alive; dropping the session closes its socket.
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(LOCK)
+                .execute(&mut lock),
+        )
+        .await;
     });
     let signal_tx = quit_tx.clone();
     let signal = tokio::spawn(async move {

@@ -12,8 +12,46 @@ use std::{io::Write, time::Duration};
 #[tokio::main]
 async fn main() {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let database = args[0].clone();
+    let mut database = args[0].clone();
     let slow = args.get(1).is_some_and(|s| s == "slow");
+    let blackhole = args.get(1).is_some_and(|s| s.starts_with("blackhole"));
+    let (freeze, frozen) = tokio::sync::watch::channel(false);
+    if blackhole {
+        // PgPool opens the first session; the worker's dedicated lock is second.
+        // Pause only that session without closing either socket, so server-side
+        // statement timeouts cannot make the client receive a response.
+        let mut url = url::Url::parse(&database).unwrap();
+        let backend = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap_or(5432));
+        let proxy = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        url.set_host(Some("127.0.0.1")).unwrap();
+        url.set_port(Some(proxy.local_addr().unwrap().port()))
+            .unwrap();
+        database = url.to_string();
+        tokio::spawn(async move {
+            let mut ordinal = 0;
+            loop {
+                let (mut front, _) = proxy.accept().await.unwrap();
+                ordinal += 1;
+                let lock_session = ordinal == 2;
+                let backend = backend.clone();
+                let mut frozen = frozen.clone();
+                tokio::spawn(async move {
+                    let mut back = tokio::net::TcpStream::connect(backend).await.unwrap();
+                    if lock_session {
+                        tokio::select! {
+                            _ = tokio::io::copy_bidirectional(&mut front, &mut back) => return,
+                            _ = frozen.changed() => {}
+                        }
+                        let sockets = (front, back);
+                        std::future::pending::<()>().await;
+                        drop(sockets);
+                    } else {
+                        let _ = tokio::io::copy_bidirectional(&mut front, &mut back).await;
+                    }
+                });
+            }
+        });
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = Router::new()
@@ -35,8 +73,10 @@ async fn main() {
             if slow { tokio::time::sleep(Duration::from_secs(4)).await; }
             Json(json!({"code":0,"data":{"message_id":"om_fixture_reply"}}))
         }))
-        .route("/ws", get(move |upgrade: WebSocketUpgrade| async move {
-            upgrade.on_upgrade(move |mut ws| async move {
+        .route("/ws", get(move |upgrade: WebSocketUpgrade| {
+            let freeze = freeze.clone();
+            async move { upgrade.on_upgrade(move |mut ws| async move {
+                if blackhole { let _ = freeze.send(true); }
                 println!("connected");
                 std::io::stdout().flush().unwrap();
                 if slow {
@@ -61,7 +101,7 @@ async fn main() {
                     ws.send(Message::Binary(frame.encode_to_vec().into())).await.unwrap();
                 }
                 while ws.recv().await.is_some() {}
-            })
+            }) }
         }));
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let transport = herkules_feishu::Feishu::with_origin(

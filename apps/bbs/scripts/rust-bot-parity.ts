@@ -541,6 +541,13 @@ try {
           "sent",
           "shutdown settles successful in-flight send",
         );
+      } else if (mode.startsWith("blackhole")) {
+        if (mode === "blackhole-shutdown") child.kill("SIGTERM");
+        same(
+          (await Promise.race([exit, deadline]))[0],
+          mode === "blackhole-shutdown" ? 0 : 1,
+          `${mode}: unreachable lock session cannot hang worker cleanup`,
+        );
       } else {
         // Dedicated lock connection loss must stop the worker.
         const locks =
@@ -563,6 +570,8 @@ try {
   }
   await lifecycle("slow");
   await lifecycle("idle");
+  await lifecycle("blackhole");
+  await lifecycle("blackhole-shutdown");
   console.log(`Rust/Node bot parity passed (${checks} checks)`);
 } finally {
   probe.stdin.end();
