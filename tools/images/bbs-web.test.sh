@@ -5,7 +5,7 @@ jobs_image=${BBS_JOBS_TEST_IMAGE:-herkules-bbs-jobs:test}
 web_image=${BBS_WEB_TEST_IMAGE:-herkules-bbs-web:test}
 task_name="herkules-bbs-web-test-$$"
 cleanup() {
-  docker rm -f "$task_name-web" "$task_name-db" >/dev/null 2>&1 || true
+  docker rm -f "$task_name-web" "$task_name-worker" "$task_name-db" >/dev/null 2>&1 || true
   docker network rm "$task_name" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
@@ -59,3 +59,34 @@ docker exec "$task_name-web" sh -ec '
 docker stop --time 10 "$task_name-web" >/dev/null
 test "$(docker inspect --format '{{.State.ExitCode}}' "$task_name-web")" = 0
 echo 'Rust-only BBS image smoke test passed: preparation, readiness, assets/API, nonroot Rust PID 1, no Node and graceful shutdown'
+
+# A persisted open circuit makes this worker smoke send no requests to RoboMaster.
+docker exec -i "$task_name-db" psql -U bbs -d bbs -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO source_guard_state(source_id,state_json,updated_at)
+VALUES ('robomaster', jsonb_build_object(
+  'consecutive_failures',1,'open_until_ms',floor(extract(epoch FROM now())*1000)+3600000,
+  'minute_bucket_start_ms',floor(extract(epoch FROM now())*1000),'minute_count',0,
+  'day_bucket_start_ms',floor(extract(epoch FROM now())/86400)*86400000,'day_count',0,
+  'last_request_at_ms',null,'last_failure_at_ms',null,'last_failure_reason','container fixture safety',
+  'total_requests',123),now())
+ON CONFLICT(source_id) DO UPDATE SET state_json=excluded.state_json;
+SQL
+docker run -d --name "$task_name-worker" --network "$task_name" --no-healthcheck \
+  -e DATABASE_URL=postgres://bbs:local-container-test@postgres/bbs \
+  "$web_image" work >/dev/null
+attempt=0
+until docker logs "$task_name-worker" 2>&1 | grep -q 'crawler started'; do
+  attempt=$((attempt + 1))
+  if [ "$attempt" -ge 20 ]; then docker logs "$task_name-worker"; exit 1; fi
+  sleep 1
+done
+docker exec "$task_name-worker" sh -ec '
+  ! command -v node
+  test "$(cat /proc/1/comm)" = herkules-bbs
+  test "$(id -u)" != 0
+  awk "/^VmRSS:/ { print }" /proc/1/status
+'
+docker stop --time 15 "$task_name-worker" >/dev/null
+test "$(docker inspect --format '{{.State.ExitCode}}' "$task_name-worker")" = 0
+test "$(docker exec "$task_name-db" psql -U bbs -d bbs -Atc "SELECT state_json->>'total_requests' FROM source_guard_state WHERE source_id='robomaster'")" = 123
+echo 'Rust-only crawler image smoke passed: nonroot Rust PID 1, no Node, persisted limits, no source requests and graceful shutdown'
