@@ -23,13 +23,14 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 FROM calciumion/new-api:v1.0.0-rc.37@sha256:8b6cf781e479e6dfcaa5f1ddd86f0e20f12352980029d0d0dfb35cf8cbd1792b AS new-api
 COPY --from=ai-backend /new-api /new-api
 
-# Build a static musl binary; Node remains for SPA delivery and corpus workers.
-FROM rust:1-alpine AS bbs-rust-build
-RUN apk add --no-cache build-base cmake perl
+# Build a static musl binary; Node remains for migrations/import and rollback.
+FROM rust:1.95-alpine AS bbs-rust-build
+RUN apk add --no-cache build-base cmake perl protobuf
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY apps/bbs/rust apps/bbs/rust
 COPY packages/auth-rust packages/auth-rust
+COPY packages/feishu-rust packages/feishu-rust
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
     cargo build --release -p herkules-bbs --locked && cp target/release/herkules-bbs /herkules-bbs

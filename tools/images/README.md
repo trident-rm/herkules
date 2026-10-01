@@ -22,7 +22,8 @@ remains covered by `services/web` tests; static-delivery tests belong to infrast
 Documentation-only changes still run checks, but skip image publication.
 
 `bbs-web` is the Rust-only web runtime (nonroot Rust PID 1, static Vite frontend,
-no Node); its `work` command runs the Rust crawler without an HTTP listener or auth configuration. Worker deployments must disable the web HTTP healthcheck. `bbs` remains the Node jobs/migration image and hybrid rollback target.
+no Node); its `bot` command runs the Rust Feishu bot and its `work` command runs the Rust crawler without an HTTP listener or auth configuration. Worker and bot deployments must override the web HTTP healthcheck; use status
+freshness monitoring for both. `bbs` remains the Node jobs/migration image and hybrid rollback target.
 The new digest is emitted as `images["bbs-web"]` in `application.json`; infrastructure
 must accept this optional fifth image before promoting a new manifest. Older
 four-image manifests remain usable through infrastructure's legacy fallback.

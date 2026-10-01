@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/bbs/rust", "packages/auth-rust"]
+members = ["apps/bbs/rust", "packages/auth-rust", "packages/feishu-rust"]
 resolver = "2"
 
 [profile.release]

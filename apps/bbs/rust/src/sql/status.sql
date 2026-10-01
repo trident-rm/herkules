@@ -8,6 +8,7 @@ SELECT
  (SELECT count(*)::int FROM article_ai JOIN articles ON articles.id=article_ai.article_id AND articles.status='fetched' WHERE article_ai.status='ready') AS ai_ready,
  (SELECT count(*)::int FROM articles WHERE status='fetched' AND NOT EXISTS (SELECT 1 FROM article_ai WHERE article_ai.article_id=articles.id)) AS ai_missing,
  (SELECT count(*)::int FROM kb_entities WHERE article_count>0) AS entities,
+ (SELECT last_reconciled_at FROM bot_state WHERE id=1) AS bot_reconciled_at,
  (SELECT max(started_at) FROM poll_runs) AS last_checked_at,
  (SELECT max(backfill_completed_at) FROM sources) AS backfill_completed_at,
  (SELECT name FROM sources ORDER BY created_at LIMIT 1) AS site_name,

@@ -58,6 +58,7 @@ test("Rust backend and shared auth changes rebuild the BBS runtime", () => {
     "Cargo.lock",
     "apps/bbs/rust/src/http.rs",
     "packages/auth-rust/src/session.rs",
+    "packages/feishu-rust/src/lib.rs",
   ]) {
     assert.deepEqual(selectImageTargets([path]).targets, ["bbs", "bbs-web"]);
   }
