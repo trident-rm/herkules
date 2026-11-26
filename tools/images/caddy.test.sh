@@ -14,9 +14,6 @@ http://bbs.test {
 http://training.test {
  import /routes/training.caddy
 }
-http://ai.test {
- import /routes/ai.caddy
-}
 CADDY
 docker run --rm -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$root/tools/images/caddy:/routes:ro" \
   caddy:2.10-alpine caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile > "$work/config.json"
