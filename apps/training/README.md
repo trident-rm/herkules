@@ -1,6 +1,6 @@
 # Training
 
-Public course framework at `https://training.herkules.dev`: VitePress + Vue,
+Local course framework using VitePress + Vue,
 Markdown lessons, a browser-worker PID lab, and an editable Rust Playground demo.
 This is a new workspace; it does not move or modify the sibling `herkules-training`.
 
@@ -67,22 +67,11 @@ A future Rust/WASM implementation can replace the simulation worker behind its
 `parameters` / `running` / `reset` commands and `{ history, current, running }` snapshots. First add parity
 checks against the fixed-step reference and pin the firmware crate revision.
 
-## Delivery
-
-The existing `platform` image carries `dist/` at `/srv/training` and the route
-fragment at `/caddy/training.caddy`. `herkules-infra` owns the hostname, proxied
-DNS record and Origin CA verification. It needs no new image key, Compose service,
-database or secrets. Training is served by Caddy, not the platform asset Worker.
-
-Publish the application artifact, select its immutable manifest in infrastructure,
-then deploy the matching infrastructure change. Older platform artifacts do not
-have the required route fragment; Caddy validation intentionally rejects them.
-
 The PID lab includes a dependency-free SVG isometric gimbal: just two solid rods, a vertical blue yaw post and a green pitch arm extending forward from its top. Actual yaw/pitch angles from separate PID states drive the solid model and degree-valued graph. The payload mass is 1 kg, its center-of-mass offset is 0.3 m, both modeled inertias are 1 kg·m², and damping is 1.2 N·m·s/rad. Gravity acts on pitch from t=0; there is no timed load step or spring. The axes share tuning gains but do not simulate inertia coupling or mechanical stops. A gravity arrow and target marker explain the motion. The simulation starts live. Parameter changes preserve position, velocity, integral state, time, and history. Pause freezes state; reset explicitly clears state/history while retaining tuning. Background timer throttling slows simulation time; catch-up per tick is capped at 100 ms. Current errors and pitch torque replace finite-run summary metrics. History is capped at 601 samples.
 
 ## Local agent tuning
 
-Run the local lab on port 3004 and configure a stdio MCP client to launch Node 24 with the absolute path to `src/agent/main.ts`. Do not launch through `vp run` inside an MCP config: stdout is reserved for the protocol. `connect_lab` returns a fresh process-scoped pairing URL for the browser's opt-in Agent panel. The WebSocket binds only `127.0.0.1:3014` (`TRAINING_BRIDGE_PORT` overrides the port); it checks the token and exact lab Origin, allows one tab, limits frames and pending commands, and rejects stale snapshots. The HTTPS deployed lab may encounter browser mixed-content/local-network restrictions; localhost development is the supported baseline. No hosted server or infrastructure changes are required.
+Run the local lab on port 3004 and configure a stdio MCP client to launch Node 24 with the absolute path to `src/agent/main.ts`. Do not launch through `vp run` inside an MCP config: stdout is reserved for the protocol. `connect_lab` returns a fresh process-scoped pairing URL for the browser's opt-in Agent panel. The WebSocket binds only `127.0.0.1:3014` (`TRAINING_BRIDGE_PORT` overrides the port); it checks the token and exact lab Origin, allows one tab, limits frames and pending commands, and rejects stale snapshots. Run the lab and bridge on the same computer.
 
 Tools: `connect_lab`, `read_lab`, `set_parameters` (partial patch), `set_running`, `reset_lab`. Writes resolve only after a worker acknowledgement; disconnect/timeouts mean unknown outcome, so read before retrying. Manual and agent controls share state; last-applied values win. Disconnect in the page immediately ends access. Pairing tokens are not persisted; do not commit them. The short reusable skill is `skills/herkules-pid-tuning/SKILL.md`; setup instructions are in `docs/guide/agent-tuning.md`.
 

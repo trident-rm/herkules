@@ -33,14 +33,14 @@ test("docs and license changes do not require images", () => {
   );
 });
 
-test("training lessons, widgets and tooling rebuild the platform artifact", () => {
+test("local training changes do not trigger application images", () => {
   for (const path of [
     "apps/training/docs/labs/pid.md",
     "apps/training/docs/.vitepress/config.mts",
     "apps/training/src/simulation.ts",
     "apps/training/package.json",
   ]) {
-    assert.deepEqual(selectImageTargets([path]).targets, ["platform"]);
+    assert.deepEqual(selectImageTargets([path]).targets, []);
   }
   assert.deepEqual(selectImageTargets(["apps/training/README.md"]).targets, []);
 });

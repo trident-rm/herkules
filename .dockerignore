@@ -20,6 +20,3 @@ tools/deploy/.env
 docs
 *.md
 !README.md
-
-# Training lessons are application build inputs, not repository documentation.
-!apps/training/docs/**/*.md
