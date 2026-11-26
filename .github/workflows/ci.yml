@@ -90,16 +90,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: voidzero-dev/setup-vp@3754dd7dbdb32bd8f6d28b6043de13ad3a75f21f # v1.21.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          cache: true
-          run-install: true
+          node-version-file: package.json
+      - name: Install the locked workspace toolchain
+        run: |
+          npm install --global "pnpm@$(node -p 'require("./package.json").devEngines.packageManager.version')"
+          pnpm install --frozen-lockfile
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       # check + every package's tests (PGlite, fake GitHub: no services) + every build.
-      - run: vp run ready
+      - run: pnpm exec vp run ready
       - run: sh tools/images/caddy.test.sh
 
   bbs-container:
@@ -141,10 +144,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: voidzero-dev/setup-vp@3754dd7dbdb32bd8f6d28b6043de13ad3a75f21f # v1.21.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          cache: true
-          run-install: true
+          node-version-file: package.json
+      - name: Install the locked workspace toolchain
+        run: |
+          npm install --global "pnpm@$(node -p 'require("./package.json").devEngines.packageManager.version')"
+          pnpm install --frozen-lockfile
       - name: Install protobuf compiler
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: Install Rust toolchain
@@ -152,13 +158,13 @@ jobs:
       - name: Compare Rust and TypeScript corpus reads
         env:
           BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
-        run: vp run @herkules/bbs#test:rust:parity
+        run: pnpm exec vp run @herkules/bbs#test:rust:parity
       - name: Compare Rust and TypeScript crawler writes
         env:
           BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
-        run: vp run "@herkules/bbs#test:rust:crawler"
+        run: pnpm exec vp run "@herkules/bbs#test:rust:crawler"
 
       - name: Compare Rust and TypeScript bot behavior
         env:
           BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
-        run: vp run test:rust:bot
+        run: pnpm exec vp run test:rust:bot
