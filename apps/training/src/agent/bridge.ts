@@ -33,11 +33,7 @@ export async function createBridge(port = 3014) {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const supplied = Buffer.from(url.searchParams.get("token") ?? "");
     const origin = request.headers.origin;
-    const allowed = [
-      "http://127.0.0.1:3004",
-      "http://localhost:3004",
-      "https://training.herkules.dev",
-    ];
+    const allowed = ["http://127.0.0.1:3004", "http://localhost:3004"];
     if (
       url.pathname !== "/lab" ||
       !origin ||

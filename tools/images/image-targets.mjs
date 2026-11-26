@@ -35,7 +35,6 @@ export function selectImageTargets(paths, { all = false } = {}) {
     if (isBuildInput(path, "services/feishu", ["src"])) add("auth");
     if (isBuildInput(path, "services/auth", ["src", "drizzle"])) add("auth");
     if (isBuildInput(path, "services/web", ["src", "public"])) add("platform");
-    if (isBuildInput(path, "apps/training", ["docs", "src"])) add("platform");
     if (isBuildInput(path, "apps/bbs", ["src", "drizzle", "web/src", "web/public"]))
       add("bbs", "bbs-web");
     if (isBuildInput(path, "packages/auth-middleware", ["src"])) add("auth", "bbs", "bbs-web");

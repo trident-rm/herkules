@@ -33,7 +33,7 @@ RUN pnpm install --offline --frozen-lockfile --ignore-scripts
 # (auth-middleware -> oauth-client -> auth -> bbs -> web), so adding, renaming or deleting a
 # package needs no edit here. Packages without a `build` script are skipped, not failed.
 # bbs round 2: the SPA build (`vp build` -> apps/bbs/dist/client) is part of @herkules/bbs's `build` script.
-RUN pnpm -r --sort run build
+RUN pnpm -r --filter '!@herkules/training' --sort run build
 # --ignore-scripts again: `pnpm deploy` otherwise runs the root `prepare` (vp config), which wants git.
 RUN pnpm --filter @herkules/auth deploy --prod --legacy --ignore-scripts /out/auth \
  && pnpm --filter @herkules/bbs deploy --prod --legacy --ignore-scripts /out/bbs \
@@ -92,6 +92,5 @@ ENTRYPOINT ["/usr/local/bin/herkules-bbs"]
 # Static platform artifact consumed by herkules-infra; never run as a service.
 FROM scratch AS platform
 COPY --from=build /app/services/web/dist /srv
-COPY --from=build /app/apps/training/dist /srv/training
 COPY tools/images/caddy /caddy
 CMD ["/artifact-only"]
