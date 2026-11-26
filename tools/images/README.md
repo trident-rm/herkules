@@ -1,12 +1,12 @@
 # Application image contract
 
-The root Dockerfile publishes `auth`, `bbs`, `bbs-web`, `ai` and `platform`. After all checks
-pass, CI builds all five in one shared BuildKit graph when image inputs change
+The root Dockerfile publishes `auth`, `bbs`, `bbs-web` and `platform`. After all checks
+pass, CI builds all four in one shared BuildKit graph when image inputs change
 (or on a manual run), then emits the `application` artifact.
 Production promotion is a separate reviewed change in `herkules-infra`.
 
 `platform` is an artifact-only image: `/srv` contains the built frontend and `/caddy`
-contains `platform.caddy`, `bbs.caddy`, `ai.caddy`, `training.caddy`, and nested `mcp/*.caddy`.
+contains `platform.caddy`, `bbs.caddy`, `training.caddy`, and nested `mcp/*.caddy`.
 Training static output lives under `/srv/training` and is served on its own origin.
 Do not start it as a container. Infrastructure copies these paths into its own Caddy
 image and imports the fragments inside the corresponding site blocks. Hostnames,

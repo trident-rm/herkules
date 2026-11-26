@@ -64,8 +64,6 @@ regression test.
 - Doc drift: five references to a non-existent `apps/bbs/DESIGN.md`; the auth
   README's account of the self-demote/self-disable ordering; the Terraform README's
   token-permission list (missing `SSL and Certificates`) and test-file count.
-- `tools/deploy/docker-compose.yml`, `.env.example` — `AI_HOST`/`AI_PORTAL_HOST` were
-  not forwarded to Caddy, so setting them in `.env` had no effect.
 
 ---
 
@@ -152,128 +150,6 @@ ORDER BY id FOR UPDATE` and count those rows so a concurrent transaction blocks 
 - **Fix**: record the row inside the plugin's own transaction if it exposes such a hook;
   otherwise reconcile CIMD registrations from the `/oauth2/authorize` path. At minimum,
   document that CIMD audit is best-effort.
-
----
-
-## `services/inference`
-
-### 9. `Membership.reconcile()` makes two round-trips per user
-
-- **Where**: `services/inference/src/membership.ts:37` (and `status()` at `:22`)
-- **Confidence**: confirmed
-- **What**: the loop awaits `admin.bindings(user.id)` and `this.status([sub])`
-  sequentially for every account, though the auth endpoint accepts up to 100 ids at once
-  (`services/auth/src/app.ts:37`). `checkedAt` is only set after the whole loop while
-  `ready` requires freshness within 60 s and the timer runs every 30 s. Past ~30 s of
-  loop time the gateway is un-ready for part of every cycle, so `handle()` throws
-  `identity_sync_unavailable` (503) for all traffic and `/healthz` reports 503.
-- **Fix**: collect `(userId → sub)` for all users in one pass, call `status(ids)` in
-  chunks of 100, then run the disable pass. Set `checkedAt` immediately after the
-  empty-list probe so a long disable pass cannot expire freshness.
-
-### 10. No 401 retry on `NewAPI.call()`
-
-- **Where**: `services/inference/src/new-api.ts:22` (token at `:14`, login at `:59`)
-- **Confidence**: reported
-- **What**: `call()` never refreshes and never retries. The access token lives ~15 min
-  and only the 30 s reconcile timer renews it, so a request that lands after expiry
-  throws `New API management request failed: … (401)`. That is not an `AdmissionError`,
-  so `failure()` returns a generic 503 for authenticated traffic until the next tick. If
-  the refresh cookie is also gone, `reconcile()` keeps failing, `checkedAt` freezes, and
-  the gateway stays closed until restart.
-- **Fix**: make `call()` self-healing — login when `accessExpiresAt <= Date.now()`, and
-  on a 401 response reset the expiry, log in, and retry exactly once. Keep the retry out
-  of `login()`/refresh themselves to avoid re-entrancy.
-
-### 11. `/healthz` is unauthenticated and ignores the backend
-
-- **Where**: `services/inference/src/gateway.ts:92`
-- **Confidence**: confirmed
-- **What**: the probe is answered before the Host check and before auth, so anyone who
-  can reach the port learns `active`/`queued` occupancy. More importantly `ready` only
-  means "reconciliation was fresh", not "New API and Postgres are reachable" — an
-  orchestrator keeps the gateway in rotation while every generation 503s.
-- **Fix**: include a control-plane health flag (last `identifyKey`/New API outcome) in
-  the payload and return 503 when it is known-bad; gate the counters to loopback or
-  `?detailed`. Use it as readiness, not liveness, so a backend blip cannot cause a
-  restart loop.
-
-### 12. Portal host falls back to New API's own UI when `AI_PORTAL_DIR` is unset
-
-- **Where**: `services/inference/src/gateway.ts:183`
-- **Confidence**: reported
-- **What**: static serving is conditional on `AI_PORTAL_DIR`, which is optional. Without
-  it a portal-host request for `/` falls through to the generic proxy and is forwarded to
-  New API, publishing the wallet/referral/subscription surfaces the portal patch exists to
-  hide — contradicting the README's statement that the backend UI is only reachable on its
-  private administration port.
-- **Fix**: fail closed for the portal host when `AI_PORTAL_DIR` is absent (503
-  `portal_unavailable` for non-API paths), or refuse to start in `loadConfig`.
-
-### 13. A waiter blocked by its own per-user limit stalls its whole GPU resource group
-
-- **Where**: `services/inference/src/queue.ts:101` (drain rule), `:55` (queue cap)
-- **Confidence**: confirmed logic; impact not measured
-- **What**: the "drain an older model switch" rule refuses to admit a newer request while
-  any older waiter on the same `resourceGroup` wants a different model — without asking
-  whether that older waiter is admissible _now_. Alice (default `perUser=1`) queues a
-  second request for model B while her first generation runs on model A; that B waiter is
-  blocked by her own limit, yet every other user's model-A request is refused admission
-  although A's worker has free slots. Waiters can accumulate until the cap rejects a fresh
-  request with `queue_full` 429 while workers are idle.
-- **Fix**: in the older-waiter predicate, count only waiters that are admissible now
-  (worker below `capacity`, user below `worker.perUser`). Keep the rule for group-blocked
-  waiters so FIFO fairness is preserved; exempt only per-user-blocked ones.
-
-### 14. `NewAPI.users()` pagination can loop forever
-
-- **Where**: `services/inference/src/new-api.ts:357`
-- **Confidence**: reported
-- **What**: the loop exits only when `users.length >= data.total`. If New API ever returns
-  a `total` larger than the pages it will serve (concurrent delete, inconsistent count, an
-  empty page with the upstream `total`), this is an unbounded request loop inside
-  `reconcile()` every 30 s. `seedModelMetadata` (`:322`) terminates on
-  `page * 100 >= total`, which is why it does not share the bug.
-- **Fix**: `if (!data.items.length || users.length >= data.total) return users;` plus a hard
-  page cap that throws.
-
-### 15. Shutdown does not drain in-flight generations
-
-- **Where**: `services/inference/src/main.ts:46`
-- **Confidence**: confirmed
-- **What**: `stop()` closes the listeners (which stops accepting but does not abort
-  existing connections) and immediately logs out and ends the SQL pool, so in-flight
-  relays lose their management session and their database pool mid-response.
-- **Fix**: after closing the listeners, poll the already-exposed
-  `gateway.queue.status.active` to zero, bounded by a deadline (~60 s), then log out and
-  end SQL. Keep the bound so an orchestrator can still SIGKILL.
-
-### 16. No progress watchdog on the worker → llama streaming call
-
-- **Where**: `services/inference/src/worker.ts:228`
-- **Confidence**: reported
-- **What**: the generation fetch carries only the client's abort signal. A llama-server
-  that stalls mid-generation holds the slot, the gateway lease and the client connection
-  (which still receives heartbeats) until undici's idle body timeout fires, and then the
-  socket is destroyed with no structured SSE error. On a single-slot model that is a 409
-  wall for everyone else meanwhile.
-- **Fix**: add a configurable upstream idle timeout; on expiry abort the fetch, write a
-  `worker_timeout` SSE error frame, and end the response so the slot frees
-  deterministically. Default it comfortably above normal prefill.
-
-### 17. Test gap: the internal dispatch success path is untested
-
-- **Where**: `services/inference/tests/gateway.test.ts:94` vs
-  `services/inference/src/gateway.ts:304`
-- **Confidence**: confirmed
-- **What**: the only internal-server test uses a forged ticket and asserts 401. Nothing
-  exercises ticket lookup and single-use marking, `model_ticket_mismatch`, propagation of
-  `Bearer worker.key` and the two `CF-Access-*` headers, `redirect: "error"`, or SSE
-  relaying. That is the path carrying worker credentials and the only enforcement that a
-  caller cannot choose a worker.
-- **Fix**: drive a real generation against a stubbed `fetch`, capture the ticket, then
-  POST to the internal server and assert the worker URL, headers, single use, and the
-  model-mismatch 400.
 
 ---
 
@@ -512,91 +388,14 @@ that these files still live in the application checkout.
 - **Where**: `Dockerfile` (`node:24-alpine`, `caddy:2.10-alpine`, `rclone/rclone:1.72`,
   `alpine:3.23`); `tools/deploy/docker-compose.yml` (`postgres:17-alpine`, gatus, beszel)
 - **Confidence**: confirmed
-- **What**: the same Dockerfile digest-pins its AI inputs deliberately, so the policy is
-  inconsistent: the four images that actually serve production resolve `node`, `caddy`,
+- **What**: four production images resolve `node`, `caddy`,
   `rclone` and `alpine` from moving tags on every rebuild. `postgres:17-alpine` moves
   within the major against a `pgdata` volume whose client is an unpinned `apk` package.
-- **Fix**: resolve and pin the six bases to digests the way the AI stages already are, and
+- **Fix**: resolve and pin the six bases to digests and
   add a `docker` Dependabot ecosystem so the pins keep moving. If digests are rejected, at
   minimum pin `postgres:17.<minor>-alpine`.
 
-### 38. `CADDY_TLS_MODE=local_http` validates a default the Caddyfile does not use
-
-- **Where**: `tools/deploy/caddy/entrypoint.sh:8` vs `tools/deploy/Caddyfile:102`
-- **Confidence**: confirmed
-- **What**: the entrypoint defaults `AI_HOST`/`AI_PORTAL_HOST` to `http://ai.localhost`
-  while the Caddyfile defaults the same placeholders to `ai.herkules.dev` /
-  `ai-portal.herkules.dev`. The dev overlay sets both, which is why this has never
-  surfaced: run the base compose with `local_http` and no AI hosts and Caddy tries to
-  obtain a certificate for `ai.herkules.dev` instead of serving `http://ai.localhost`.
-  (`AI_HOST` is now forwarded by the caddy service; the defaults still disagree.)
-- **Fix**: make one side own the default — mirror the Caddyfile's values in the
-  entrypoint, or read the Caddyfile default in both places.
-
 ## `tools/ai` and tooling
-
-### 40. `prepare-production.py` silently destroys operator config on rerun
-
-- **Where**: `tools/ai/prepare-production.py:84`
-- **Confidence**: confirmed
-- **What**: the script rewrites `.env.ai` and `.env.ai-gateway` from scratch with one key
-  each, while `README.md` instructs operators to add `AI_DEEPSEEK_KEY_FILE` and
-  `AI_OPENROUTER_KEY_FILE` to `.env.ai-gateway`. Rerunning provisioning — which the README
-  itself does, and which is documented as safe — truncates the file and drops those keys,
-  so the next gateway restart loses the DeepSeek/OpenRouter channels with no error. The
-  script already implements preserve-and-merge for `.env.auth`, so this is an
-  inconsistency rather than a policy.
-- **Fix**: extract the `.env.auth` merge into a helper and use it for both AI env files;
-  add a test that pre-populates `.env.ai-gateway` and asserts operator keys survive.
-
-### 41. `mock-worker.mjs` crashes the whole preview on one malformed request
-
-- **Where**: `tools/ai/mock-worker.mjs:20`
-- **Confidence**: confirmed
-- **What**: the request handler `JSON.parse`s the body unguarded. A `GET`, a stray `curl`
-  or a truncated upload rejects the handler's promise, which `http` does not handle, so
-  Node terminates the process. `dev.mjs:150` treats any child exit as fatal, so one bad
-  request tears down the entire local AI stack.
-- **Fix**: try/catch → 400, 405 for non-POST, and validate that `messages` is an array.
-
-### 42. `smoke.py`'s `finally` can mask the real failure
-
-- **Where**: `tools/ai/smoke.py:36`, `:60`, `:90`
-- **Confidence**: confirmed
-- **What**: `token` and `root` are bound after several fallible network steps. A failure
-  before that unwinds into `finally`, which runs `api(..., token, 'PUT')` and raises
-  `UnboundLocalError`, replacing the original exception. Separately, if the first restore
-  raises, the second never runs and the fixture is left half-restored, contradicting the
-  README's "it restores Alice afterward".
-- **Fix**: initialize `token = root = None`, skip restores whose variables are unset, wrap
-  each in its own try/except, report the collected failures, and let the original
-  exception surface.
-
-### 43. `dev.mjs` fails silently when docker cannot spawn, and treats any argument as start
-
-- **Where**: `tools/ai/dev.mjs:94`, `:41`, `:122`
-- **Confidence**: confirmed
-- **What**: `compose()` inspects only `r.status`, so a missing `docker` binary yields
-  `status === null` and a bare exit code with no message; the same shape prints
-  "Local metadata view setup failed: null". And `if (process.argv[2] !== "stop")` means
-  `--help` or a typo starts the full stack, or throws the misleading "already running".
-- **Fix**: `if (r.error) throw r.error`, include `sql.error ?? sql.stderr`, and accept only
-  `undefined | "stop"` — otherwise print usage and exit 2.
-
-### 44. Unpinned text encodings and half-written credential pairs
-
-- **Where**: `tools/ai/new-api/patch.py` (five `read_text`/`write_text` sites);
-  `tools/ai/save-access-token.py:33`
-- **Confidence**: confirmed
-- **What**: two independent portability/robustness defects. `patch.py` reads and writes
-  CJK-containing upstream sources with the locale encoding, so a host without C-locale
-  UTF-8 coercion raises `UnicodeDecodeError` or mangles a byte-exact patch (it works in
-  the current Debian-based build stage, which is why CI is green). `save-access-token.py`
-  writes a credential pair in a plain loop, so a failure or Ctrl-C between writes leaves
-  one file behind and the next run refuses with "move them aside", with no `--force` and
-  no cleanup.
-- **Fix**: add `encoding="utf-8"` at all five `patch.py` sites. Write the credential pair
-  via temp siblings plus `os.replace` (or unlink the first on failure) and add `--force`.
 
 ### 45. `benchmarks/probe.py` discards a failed 128K attempt and writes results twice
 
@@ -607,46 +406,6 @@ that these files still live in the application checkout.
   failure — the outcome the benchmark exists to capture. A duplicated `write_text` two
   lines later is dead.
 - **Fix**: append a per-context result in both branches; delete the duplicate write.
-
-### 46. `prepare-production.py` reports the wrong cause for the likeliest mistakes
-
-- **Where**: `tools/ai/prepare-production.py:20`, `:51`
-- **Confidence**: confirmed
-- **What**: a wrong deployment path raises a raw `FileNotFoundError`, and a missing
-  `compose.sh` (or a Docker failure) surfaces only as "AI database provisioning failed.
-  Review the database state privately." — sending the operator to inspect the database
-  when the real problem is the path. Suppressing `psql` stderr is defensible, but there is
-  no escape hatch to see it.
-- **Fix**: assert the expected paths exist and name the missing one; add `--verbose` that
-  prints `psql` stderr while keeping it suppressed by default.
-
-### 47. `HerkulesWalletOverflow` is an N+1 that an unrelated subscription can fail
-
-- **Where**: `tools/ai/new-api/herkules_pools.go:31`
-- **Confidence**: reported (upstream is a single `COUNT` in the pinned revision)
-- **What**: the Herkules version loads every active subscription and runs a per-row plan
-  lookup. A row whose plan cannot be loaded (stale or deleted `PlanId`) makes the function
-  return an error, which the billing path turns into a hard `QueryDataError` — so a
-  cloud-only user's dangling row blocks wallet fallback for a purely local model. It is on
-  the hot fallback path. `summary.Subscription` is also dereferenced without a nil check,
-  and the test covers only the happy path.
-- **Fix**: one join/count query filtered by pool and `allow_wallet_overflow = false`,
-  mirroring upstream's single-statement shape, or at minimum skip nil/failed rows. Keep
-  the existing "no strict matching sub ⇒ true" semantics, which the test pins.
-
-### 48. Cloud-model routing degrades silently to "local" on a padded or empty env value
-
-- **Where**: `tools/ai/new-api/herkules_pools.go:10` (with `patch.py:30`)
-- **Confidence**: reported
-- **What**: `strings.Split(..., ",")` never trims, so `"a, b"` makes ` b` a local model.
-  When the variable is unset or empty while plans are enabled, every model is treated as
-  local, so an explicit cloud model can consume local allowance or the wallet while the
-  gateway still bootstraps the cloud channel from the key file. Both in-repo compose files
-  set the value correctly, so this is a validation gap rather than a live bug.
-- **Fix**: `strings.TrimSpace` each entry and refuse to serve when plans are enabled with
-  an empty list; add tests for the padded and unset cases.
-
----
 
 ## Smaller, worth batching
 
@@ -684,11 +443,3 @@ that these files still live in the application checkout.
 - `apps/bbs/src/bot/present.ts:74` and `spa/head.ts` — `clip`/`cutDescription` now delegate
   to `truncateChars`; `library/articles.ts` and `mcp/present.ts` were already correct. No
   action, listed only so the next reader does not re-audit them.
-- `services/inference/src/gateway.ts:49` — `x-forwarded-proto` is derived from
-  `AI_PORTAL_ORIGIN` for every proxied request, including ones that arrived on
-  `AI_API_ORIGIN`. Harmless today because both are https in production; pick the protocol
-  from the host that matched.
-- `services/inference/src/membership.ts`, `plans.ts:89` — every authenticated generation
-  performs three serialized control-plane lookups, one of them (`plans.ensure`) entirely
-  uncached. Memoize `ensure` for ~60 s; do **not** cache `Membership.status`, which is the
-  revocation check.

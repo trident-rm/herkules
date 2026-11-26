@@ -23,21 +23,14 @@ test("lockfile and publication machinery invalidate the complete image tuple", (
     ".github/workflows/image-build.yml",
     "tools/images/image-targets.mjs",
   ]) {
-    assert.deepEqual(selectImageTargets([path]).targets, [
-      "auth",
-      "bbs",
-      "bbs-web",
-      "ai",
-      "platform",
-    ]);
+    assert.deepEqual(selectImageTargets([path]).targets, ["auth", "bbs", "bbs-web", "platform"]);
   }
 });
-test("docs and license changes do not require images; AI source does", () => {
+test("docs and license changes do not require images", () => {
   assert.equal(
     selectImageTargets(["docs/auth.md", "LICENSE-MIT", "KNOWN_ISSUES.md"]).deploy,
     false,
   );
-  assert.deepEqual(selectImageTargets(["services/inference/src/gateway.ts"]).targets, ["ai"]);
 });
 
 test("training lessons, widgets and tooling rebuild the platform artifact", () => {

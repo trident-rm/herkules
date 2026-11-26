@@ -1,27 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Application images: --target auth | bbs | bbs-web | ai | platform.
+# Application images: --target auth | bbs | bbs-web | platform.
 # The build stage installs the whole workspace once; runtime images get only
-# `pnpm deploy --prod` output (auth, bbs, ai) or static assets and routes (platform).
-
-# Checksum-pinned New API source, with isolated subscription funding pools.
-FROM oven/bun:1.4.0@sha256:5ff609364c049b54eb0ff560ec96319729a972078ef2c755d758f0c6ef89c2d6 AS ai-portal
-WORKDIR /build
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
-COPY tools/ai/new-api /new-api
-COPY tools/ai/portal/build.mjs tools/ai/portal/edits.json ./
-RUN bun build.mjs /portal
-
-FROM golang:1.26.1-alpine@sha256:2389ebfa5b7f43eeafbd6be0c3700cc46690ef842ad962f6c5bd6be49ed82039 AS ai-backend
-ENV CGO_ENABLED=0 GOWORK=off
-WORKDIR /build
-COPY --from=ai-portal /portal/portal-source.tar.gz /tmp/source.tar.gz
-RUN tar -xzf /tmp/source.tar.gz -C /build
-COPY --from=ai-portal /portal /build/web/dist
-RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go test ./model -run TestHerkules -count=1 && go build -ldflags "-s -w -X github.com/QuantumNous/new-api/common.Version=v1.0.0-rc.37-herkules-pools" -o /new-api .
-
-FROM calciumion/new-api:v1.0.0-rc.37@sha256:8b6cf781e479e6dfcaa5f1ddd86f0e20f12352980029d0d0dfb35cf8cbd1792b AS new-api
-COPY --from=ai-backend /new-api /new-api
+# `pnpm deploy --prod` output (auth, bbs) or static assets and routes (platform).
 
 # Build a static musl binary; Node remains for migrations/import and rollback.
 FROM rust:1.95-alpine AS bbs-rust-build
@@ -57,8 +37,7 @@ RUN pnpm -r --sort run build
 # --ignore-scripts again: `pnpm deploy` otherwise runs the root `prepare` (vp config), which wants git.
 RUN pnpm --filter @herkules/auth deploy --prod --legacy --ignore-scripts /out/auth \
  && pnpm --filter @herkules/bbs deploy --prod --legacy --ignore-scripts /out/bbs \
- && pnpm --filter @herkules/feishu deploy --prod --legacy --ignore-scripts /out/feishu \
- && pnpm --filter @herkules/inference deploy --prod --legacy --ignore-scripts /out/inference
+ && pnpm --filter @herkules/feishu deploy --prod --legacy --ignore-scripts /out/feishu
 
 # ── runtime base for the two Node services ─────────────────────────────────
 # auth and bbs differ only in port, env, entrypoint and the /out directory they copy.
@@ -81,18 +60,6 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3001/auth/healthz || exit 1
 CMD ["node", "dist/main.mjs"]
-
-# ── ai (the `ai` Compose profile: inference gateway + portal, and New API) ──
-# Its own image, so an AI change neither rebuilds nor restarts auth. Compose runs it twice:
-# `node /ai/dist/main.mjs` (inference) and `/new-api` (working_dir /data); both define their
-# healthchecks there.
-FROM runtime AS ai
-COPY --from=build --chown=node:node /out/inference /ai
-COPY --from=ai-portal --chown=node:node /portal /ai/portal
-COPY --from=ai-backend /new-api /new-api
-USER root
-RUN apk add --no-cache tzdata ca-certificates && mkdir -p /data && chown node:node /data
-USER node
 
 # ── bbs (API + MCP + SPA; `files` carries dist/ and drizzle/) ───────────────
 FROM runtime AS bbs

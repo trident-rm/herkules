@@ -34,7 +34,7 @@ jobs:
           fi
 
   images:
-    needs: [changes, ready, bbs-rust, bbs-container, new-api, secrets]
+    needs: [changes, ready, bbs-rust, bbs-container, secrets]
     if: needs.changes.outputs.images == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     permissions:
       actions: read
@@ -43,7 +43,7 @@ jobs:
     uses: ./.github/workflows/image-build.yml
 
   manifest:
-    needs: [images, ready, bbs-rust, bbs-container, new-api, secrets]
+    needs: [images, ready, bbs-rust, bbs-container, secrets]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -162,40 +162,3 @@ jobs:
         env:
           BBS_RUST_TEST_POSTGRES: postgres://bbs_test:parity_test@127.0.0.1:5432/postgres
         run: vp run test:rust:bot
-
-  new-api:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      # Keep this check present on every PR, but build only when its inputs change.
-      - name: Detect New API build inputs
-        id: inputs
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          else
-            git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- Dockerfile .dockerignore .github/workflows/ci.yml tools/ai/new-api tools/ai/portal > new-api-paths
-            if [[ -s new-api-paths ]]; then
-              echo "build=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "build=false" >> "$GITHUB_OUTPUT"
-            fi
-            rm new-api-paths
-          fi
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-        if: steps.inputs.outputs.build == 'true'
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        if: steps.inputs.outputs.build == 'true'
-        with:
-          context: .
-          target: ai-backend
-          push: false
-          cache-from: type=gha,scope=ai-backend
-          cache-to: type=gha,scope=ai-backend,mode=max

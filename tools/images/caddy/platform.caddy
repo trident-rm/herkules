@@ -1,7 +1,4 @@
 	# Caddy orders `handle` blocks by path specificity, so the catch-all below always loses to these.
-	handle /ai {
-		redir {$AI_PORTAL_ORIGIN:https://ai-portal.herkules.dev} 302
-	}
 	handle /auth/internal/* {
 		respond 404
 	}

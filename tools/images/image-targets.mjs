@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 
-const allTargets = ["auth", "bbs", "bbs-web", "ai", "platform"];
+const allTargets = ["auth", "bbs", "bbs-web", "platform"];
 const nodeBuildInputs = new Set([
   "package.json",
   "pnpm-lock.yaml",
@@ -34,12 +34,6 @@ export function selectImageTargets(paths, { all = false } = {}) {
     if (nodeBuildInputs.has(path) || path.startsWith("tsconfig")) add(...allTargets);
     if (isBuildInput(path, "services/feishu", ["src"])) add("auth");
     if (isBuildInput(path, "services/auth", ["src", "drizzle"])) add("auth");
-    if (
-      isBuildInput(path, "services/inference", ["src"]) ||
-      path.startsWith("tools/ai/portal/") ||
-      path.startsWith("tools/ai/new-api/")
-    )
-      add("ai");
     if (isBuildInput(path, "services/web", ["src", "public"])) add("platform");
     if (isBuildInput(path, "apps/training", ["docs", "src"])) add("platform");
     if (isBuildInput(path, "apps/bbs", ["src", "drizzle", "web/src", "web/public"]))
