@@ -5,7 +5,6 @@
  *
  * Call chains: app -> users/bearer -> db (3 files); app -> registry (2); app -> auth (Better Auth).
  */
-import { timingSafeEqual } from "node:crypto";
 import { metadataResponse } from "@better-auth/oauth-provider";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -83,23 +82,6 @@ export function createApp(deps: AppDeps): Hono {
   app.on(["GET", "HEAD"], "/auth/avatars/:userId", (c) =>
     avatars.serve(c.req.param("userId"), c.req.raw),
   );
-
-  // A narrow, server-to-server status read; Caddy never publishes this path.
-  app.post("/auth/internal/ai-membership", async (c) => {
-    const expected = deps.config.AI_SYNC_SECRET;
-    const supplied = c.req.header("authorization")?.replace(/^Bearer /, "") ?? "";
-    if (
-      !expected ||
-      Buffer.byteLength(supplied) !== Buffer.byteLength(expected) ||
-      !timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))
-    ) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
-    const body = batchSchema.safeParse(await c.req.json().catch(() => null));
-    if (!body.success) return c.json({ error: "invalid_request" }, 400);
-    c.header("Cache-Control", "no-store");
-    return c.json({ users: await users.accountStatus(body.data.ids) });
-  });
 
   // Account merging needs a browser session, never a downstream bearer token.
   // Require exact Origin on mutations; these routes are outside Better Auth's CSRF middleware.

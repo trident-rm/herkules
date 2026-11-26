@@ -1,5 +1,0 @@
- reverse_proxy inference:4010 {
-  flush_interval -1
-  header_up -X-Herkules-Ticket
-  header_up X-Herkules-Client-IP {client_ip}
- }

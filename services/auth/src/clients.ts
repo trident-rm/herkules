@@ -161,6 +161,8 @@ export type FirstPartyClient =
       readonly secret: (config: Config) => string | undefined;
     });
 
+const RETIRED_AI_CLIENT_ID = "herkules-ai";
+
 export const FIRST_PARTY_CLIENTS = [
   {
     clientId: "herkules-web",
@@ -228,19 +230,6 @@ export const FIRST_PARTY_CLIENTS = [
     secret: (c) => c.KELLNR_CLIENT_SECRET,
   },
   {
-    clientId: "herkules-ai",
-    name: "Herkules AI",
-    redirectUris: (c) => (c.AI_PORTAL_ORIGIN ? [`${c.AI_PORTAL_ORIGIN}/oauth/herkules`] : []),
-    skipConsent: true,
-    tokenEndpointAuthMethod: "client_secret_basic",
-    applicationType: "web",
-    grantTypes: ["authorization_code"],
-    secret: (c) => c.AI_CLIENT_SECRET,
-    // New API's custom OAuth client authenticates with Basic but has no PKCE support.
-    // This exception is restricted to this confidential client and its exact callback.
-    requirePKCE: false,
-  },
-  {
     clientId: "larkai",
     name: "LarkAI Dashboard",
     redirectUris: (c) => (c.LARKAI_ORIGIN ? [`${c.LARKAI_ORIGIN}/oidc/callback`] : []),
@@ -300,7 +289,11 @@ export const STATIC_CLIENTS: readonly {
 
 /** Every client id this service owns; pruning never touches them. */
 export function ownedClientIds(): readonly string[] {
-  return [...FIRST_PARTY_CLIENTS.map((c) => c.clientId), ...STATIC_CLIENTS.map((c) => c.clientId)];
+  return [
+    RETIRED_AI_CLIENT_ID,
+    ...FIRST_PARTY_CLIENTS.map((c) => c.clientId),
+    ...STATIC_CLIENTS.map((c) => c.clientId),
+  ];
 }
 
 /** The row a first-party entry must be, as a projection comparable to `ClientRow`. */
@@ -395,6 +388,8 @@ export async function ensureFirstPartyClients(
   now: () => Date,
   log: (line: string) => void = (line) => console.log(line),
 ): Promise<void> {
+  // Existing installs may still have the retired portal client in the database.
+  await db.clients.update(RETIRED_AI_CLIENT_ID, { disabled: true });
   const { wanted, skipped } = await wantedFirstPartyClients(config);
   for (const reason of skipped) log(`first-party client skipped — ${reason}`);
   for (const w of wanted) {

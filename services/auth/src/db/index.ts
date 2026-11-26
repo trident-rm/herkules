@@ -81,6 +81,7 @@ export interface ClientRow {
 }
 
 export type ClientPatch = {
+  readonly disabled?: boolean;
   readonly requirePKCE?: boolean;
   readonly name?: string;
   readonly clientSecret?: string | null;
@@ -474,6 +475,7 @@ function queries(d: Drizzle): AuthQueries {
         await d
           .update(oauthClient)
           .set({
+            disabled: patch.disabled,
             ...(patch.requirePKCE !== undefined ? { requirePKCE: patch.requirePKCE } : {}),
             ...(patch.name !== undefined ? { name: patch.name } : {}),
             ...("clientSecret" in patch ? { clientSecret: patch.clientSecret ?? null } : {}),

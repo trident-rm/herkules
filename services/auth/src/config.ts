@@ -105,10 +105,6 @@ export const configSchema = z.object({
       .optional(),
   ),
   CLOUDFLARE_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
-  AI_PORTAL_ORIGIN: z.preprocess(emptyToUndefined, z.string().url().optional()),
-  AI_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
-  /** Internal account-status checks; never a browser or inference API credential. */
-  AI_SYNC_SECRET: z.preprocess(emptyToUndefined, z.string().min(32).optional()),
   /**
    * apps/bbs's public origin, e.g. https://bbs.herkules.dev (dev: http://localhost:3003).
    * Set: the confidential first-party `bbs` client is seeded with `${BBS_ORIGIN}/callback`.
@@ -192,15 +188,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       "LARKAI_ORIGIN and LARKAI_CLIENT_SECRET must be set together or not at all",
     );
   }
-  const aiSettings = [parsed.AI_PORTAL_ORIGIN, parsed.AI_CLIENT_SECRET, parsed.AI_SYNC_SECRET];
-  if (
-    aiSettings.some((value) => value !== undefined) &&
-    aiSettings.some((value) => value === undefined)
-  ) {
-    throw new TypeError(
-      "AI_PORTAL_ORIGIN, AI_CLIENT_SECRET and AI_SYNC_SECRET must be set together or not at all",
-    );
-  }
   return Object.freeze({
     ...parsed,
     PUBLIC_ORIGIN: origin,
@@ -210,8 +197,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     OPS_ORIGIN: parsed.OPS_ORIGIN === undefined ? undefined : new URL(parsed.OPS_ORIGIN).origin,
     CRATES_ORIGIN:
       parsed.CRATES_ORIGIN === undefined ? undefined : new URL(parsed.CRATES_ORIGIN).origin,
-    AI_PORTAL_ORIGIN:
-      parsed.AI_PORTAL_ORIGIN === undefined ? undefined : new URL(parsed.AI_PORTAL_ORIGIN).origin,
     issuer: `${origin}/auth`,
     isProduction,
   });

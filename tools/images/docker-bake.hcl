@@ -1,5 +1,5 @@
 # The release images as one BuildKit graph (.github/workflows/image-build.yml). Building the
-# selected targets together shares the `build` and AI stages between them instead of each
+# selected targets together shares the `build` stage between them instead of each
 # runner rebuilding them. Paths resolve from the working directory: run from the repo root.
 #   docker buildx bake -f tools/images/docker-bake.hcl --print auth bbs
 
@@ -15,12 +15,12 @@ variable "SHORT_SHA" {
 target "docker-metadata-action" {}
 
 group "default" {
-  targets = ["auth", "bbs", "bbs-web", "ai", "platform"]
+  targets = ["auth", "bbs", "bbs-web", "platform"]
 }
 
 target "image" {
   matrix = {
-    image = ["auth", "bbs", "bbs-web", "ai", "platform"]
+    image = ["auth", "bbs", "bbs-web", "platform"]
   }
   name       = image
   inherits   = ["docker-metadata-action"]
@@ -32,8 +32,7 @@ target "image" {
     "ghcr.io/${REPOSITORY}/${image}:latest",
     "ghcr.io/${REPOSITORY}/${image}:sha-${SHORT_SHA}",
   ]
-  # ai-backend is written by ci.yml's new-api job.
-  cache-from = [for scope in ["auth", "bbs", "bbs-web", "platform", "ai-backend", "ai"] : "type=gha,scope=${scope}"]
+  cache-from = [for scope in ["auth", "bbs", "bbs-web", "platform"] : "type=gha,scope=${scope}"]
   # One scope per image: concurrent exports to a single GHA scope overwrite each other.
   cache-to = ["type=gha,scope=${image},mode=max"]
 }
