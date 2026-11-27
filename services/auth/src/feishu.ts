@@ -1,6 +1,7 @@
-/** Feishu profile and admission policy. OAuth state, PKCE and token exchange belong to Better Auth. */
+/** Feishu OAuth endpoints, profile and admission policy. Better Auth owns OAuth state and refresh. */
 import { createHash } from "node:crypto";
 import type { BetterAuthPlugin } from "better-auth";
+import { getOAuth2Tokens, type OAuth2Tokens } from "better-auth/oauth2";
 import { z } from "zod";
 import type { Audit } from "./audit.ts";
 import type { Config } from "./config.ts";
@@ -8,7 +9,8 @@ import type { AuthDb } from "./db/index.ts";
 import type { AdmittedVia, GatePhase, GateUserRow } from "./gate.ts";
 
 export const FEISHU_AUTHORIZE = "https://accounts.feishu.cn/open-apis/authen/v1/authorize";
-export const FEISHU_TOKEN = "https://accounts.feishu.cn/oauth/v3/token";
+const FEISHU_CODE_EXCHANGE = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
+export const FEISHU_REFRESH = "https://accounts.feishu.cn/oauth/v3/token";
 export const FEISHU_USER_INFO = "https://open.feishu.cn/open-apis/authen/v1/user_info";
 export const FEISHU_SCOPES = [
   "contact:user.base:readonly",
@@ -53,6 +55,15 @@ const profileSchema = z.object({
   email: z.string().nullish(),
   avatar_url: z.string().url().nullish(),
 });
+const tokenSchema = z.object({
+  code: z.literal(0),
+  access_token: z.string().min(1),
+  expires_in: z.number().int().positive(),
+  token_type: z.string().optional(),
+  refresh_token: z.string().min(1).optional(),
+  refresh_token_expires_in: z.number().int().positive().optional(),
+  scope: z.string().optional(),
+});
 export type FeishuProfile = z.infer<typeof profileSchema>;
 export const feishuSubject = (p: FeishuProfile) => `${p.tenant_key}:${p.open_id}`;
 export function feishuEmail(p: FeishuProfile): string | undefined {
@@ -70,6 +81,11 @@ export const FEISHU_ERRORS = {
 type Reason = keyof typeof FEISHU_ERRORS;
 type Verdict = { ok: true; via: AdmittedVia } | { ok: false; reason: Reason };
 export interface Feishu {
+  exchangeCode(data: {
+    code: string;
+    redirectURI: string;
+    codeVerifier?: string;
+  }): Promise<OAuth2Tokens>;
   profile(token: string): Promise<FeishuProfile | null>;
   decide(profile: FeishuProfile, userId?: string): Promise<Verdict>;
   reject(reason: Reason, phase: GatePhase, profile?: FeishuProfile, userId?: string): Promise<void>;
@@ -88,6 +104,34 @@ export function createFeishu(deps: {
   // The service has one process. Coalesce checks (including rotating refresh tokens) per user.
   const checking = new Map<string, Promise<Verdict>>();
   const self: Feishu = {
+    async exchangeCode({ code, redirectURI, codeVerifier }) {
+      if (!config.FEISHU_APP_ID || !config.FEISHU_APP_SECRET || !codeVerifier)
+        throw new Error("Feishu code exchange requires client credentials and a PKCE verifier");
+      // Feishu's authorization guide pairs PKCE with the v2 code exchange.
+      // The v3 refresh endpoint accepts refresh tokens issued by either version.
+      const response = await fetchImpl(FEISHU_CODE_EXCHANGE, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "authorization_code",
+          client_id: config.FEISHU_APP_ID,
+          client_secret: config.FEISHU_APP_SECRET,
+          code,
+          redirect_uri: redirectURI,
+          code_verifier: codeVerifier,
+        }),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      const token = tokenSchema.safeParse(body);
+      if (!response.ok || !token.success) {
+        const error = z.object({ code: z.number().int() }).safeParse(body);
+        const providerCode = error.success ? `, Feishu code ${error.data.code}` : "";
+        throw new Error(`Feishu code exchange failed (HTTP ${response.status}${providerCode})`);
+      }
+      return getOAuth2Tokens(token.data);
+    },
     async profile(token) {
       try {
         const res = await fetchImpl(FEISHU_USER_INFO, {
