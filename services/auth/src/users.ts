@@ -73,6 +73,8 @@ export interface Users {
   /** Reads. Batch is bounded (≤ 100 ids); unknown ids are omitted, not errors. */
   info(id: string): Promise<UserInfo | undefined>;
   infoMany(ids: readonly string[]): Promise<readonly UserInfo[]>;
+  /** Enabled = the user exists and is not disabled. Order follows `ids`; unknown ids are disabled. */
+  accountStatus(ids: readonly string[]): Promise<readonly { id: string; enabled: boolean }[]>;
   /** The member directory: every non-disabled user, sorted by display name. Small team; bounded at 500. */
   directory(): Promise<readonly UserInfo[]>;
 
@@ -183,6 +185,10 @@ export function createUsers(deps: UsersDeps): Users {
     async info(id) {
       const u = await db.users.byId(id);
       return u ? infoOf(u) : undefined;
+    },
+    async accountStatus(ids) {
+      const rows = new Map((await db.users.byIds(ids)).map((row) => [row.id, row]));
+      return ids.map((id) => ({ id, enabled: rows.get(id)?.banned === false }));
     },
     async infoMany(ids) {
       const unique = [...new Set(ids)].slice(0, 100);

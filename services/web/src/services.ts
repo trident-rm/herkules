@@ -30,6 +30,15 @@ export interface Service {
 
 export const SERVICES: readonly Service[] = [
   {
+    id: "ai",
+    title: "AI",
+    blurb:
+      "API keys for the team's models: OpenAI and Anthropic APIs for Pi, Codex and Claude Code, with usage and request logs.",
+    sub: "ai-portal",
+    devPort: 4010,
+    access: "member",
+  },
+  {
     id: "bbs",
     title: "RM 文库",
     blurb:

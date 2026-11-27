@@ -192,6 +192,21 @@ export const FIRST_PARTY_CLIENTS = [
   },
   {
     /**
+     * The AI portal (services/ai, ai-portal.<domain>): the same confidential PKCE flow as
+     * `bbs`, through herkules-auth's Rust session. The retired New API client keeps its own
+     * id, `herkules-ai`, and stays disabled.
+     */
+    clientId: "ai",
+    name: "Herkules AI",
+    redirectUris: (c) => (c.AI_PORTAL_ORIGIN ? [`${c.AI_PORTAL_ORIGIN}/callback`] : []),
+    skipConsent: true,
+    tokenEndpointAuthMethod: "client_secret_basic",
+    applicationType: "native",
+    grantTypes: ["authorization_code", "refresh_token"],
+    secret: (c) => c.AI_CLIENT_SECRET,
+  },
+  {
+    /**
      * The Beszel hub (tools/deploy, ops.<domain>): PocketBase's generic OIDC provider.
      * The first OIDC relying party of this issuer — it requests `openid email profile`
      * with no `resource`, so the token carries an id_token and `/oauth2/userinfo`

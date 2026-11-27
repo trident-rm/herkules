@@ -44,6 +44,19 @@ Development accepts `pglite://` database URLs. Production uses Postgres and appl
 - `src/config.ts`: environment boundary
 - `tests/`: end-to-end issuer, client, gate, and audit behavior
 
+## AI portal
+
+`AI_PORTAL_ORIGIN`, `AI_CLIENT_SECRET` and `AI_SYNC_SECRET` are set together or not at
+all. They seed the confidential `ai` client for [the AI gateway](../ai/README.md) with
+the exact `${AI_PORTAL_ORIGIN}/callback` redirect, PKCE and refresh tokens, for the
+`api/ai` registry audience. The retired New API client, `herkules-ai`, is disabled on
+every boot.
+
+`POST /auth/internal/ai-membership` takes `{"ids": [...]}`, at most 100, and requires
+`Authorization: Bearer <AI_SYNC_SECRET>`. It answers `{"users": [{"id", "enabled"}]}` in
+request order; a missing or disabled user is `enabled: false`. The gateway calls it over
+the private network. Caddy answers 404 for every `/auth/internal/*` path.
+
 ## Cloudflare Access
 
 Set `CLOUDFLARE_TEAM_NAME` (the label before `.cloudflareaccess.com`) and
