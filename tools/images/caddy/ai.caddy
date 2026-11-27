@@ -1,5 +1,8 @@
 # Both AI hostnames (ai-api and ai-portal): the gateway tells them apart by Host.
-# No buffering, so streamed tokens and SSE keep-alives pass through as they arrive.
+# No buffering, so streamed tokens, SSE keep-alives and the spaces Siphon sends before a slow
+# non-streamed body pass through as they arrive. Caddy sets no read, write or response-header
+# timeout on this proxy or its servers by default; the gateway's 90 s upstream idle timeout
+# is the only limit, and Cloudflare's 100 s idle limit sits in front.
 reverse_proxy ai:4010 {
 	flush_interval -1
 }

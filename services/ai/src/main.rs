@@ -35,7 +35,7 @@ pub struct App {
     pub config: Config,
     pub db: PgPool,
     pub auth: Auth,
-    /// For backends, the auth service and Cloudflare. No total timeout: generations run long.
+    /// For backends, the auth service and Cloudflare: an idle timeout, no total timeout.
     pub http: reqwest::Client,
     pub membership: Membership,
     pub backends: Backends,
@@ -190,11 +190,8 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|e| format!("database: {e}"))?;
     let auth = Auth::new(config.auth.clone()).map_err(|e| format!("OAuth: {e}"))?;
-    let http = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("HTTP client: {e}"))?;
+    let http =
+        api::upstream_client(config.upstream_idle).map_err(|e| format!("HTTP client: {e}"))?;
     let app = Arc::new(App {
         membership: Membership::new(
             http.clone(),

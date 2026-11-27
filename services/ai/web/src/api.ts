@@ -43,6 +43,7 @@ export interface RequestRow {
   streamed: boolean;
   cancelled: boolean;
   effort: string | null;
+  error: string | null;
   promptTokens: number | null;
   cachedTokens: number | null;
   outputTokens: number | null;

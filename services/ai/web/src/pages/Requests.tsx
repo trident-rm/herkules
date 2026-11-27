@@ -94,8 +94,9 @@ function Row({
         <TableCell>
           {r.model ?? "–"} · {r.backend ?? "–"}
         </TableCell>
-        <TableCell className="text-right">
+        <TableCell className="text-right" title={r.error ?? undefined}>
           {r.status}
+          {r.error ? " · error" : ""}
           {r.cancelled ? " · cancelled" : ""}
         </TableCell>
         <TableCell className="text-right whitespace-nowrap">

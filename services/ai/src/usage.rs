@@ -12,7 +12,7 @@ const PARSE_LIMIT: usize = 32 << 20;
 /// The longest SSE line parsed.
 const LINE_LIMIT: usize = 4 << 20;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stats {
     /// The whole prompt, including tokens read from the prefix cache.
     pub prompt_tokens: Option<i64>,
@@ -21,6 +21,26 @@ pub struct Stats {
     pub ttft_ms: Option<f64>,
     pub decode_tps: Option<f64>,
     pub tokens_per_round: Option<f64>,
+    /// The error a body or event reported, even under a 200: Siphon answers a reply that is
+    /// not streamed with 200 before its body is ready, so a later failure arrives as an error
+    /// object in the body.
+    pub error: Option<String>,
+}
+
+/// The message of an error object in OpenAI's, Anthropic's or the Responses API's shape.
+fn error_of(value: &Value) -> Option<String> {
+    let error = match value["type"].as_str() {
+        Some("response.failed") => &value["response"]["error"],
+        _ => &value["error"],
+    };
+    if error.is_null() {
+        return None;
+    }
+    let message = error["message"]
+        .as_str()
+        .or(error.as_str())
+        .unwrap_or("error");
+    Some(message.chars().take(300).collect())
 }
 
 fn int(value: &Value) -> Option<i64> {
@@ -79,6 +99,9 @@ impl Stats {
         for holder in [value, &value["response"], &value["message"]] {
             timings.push(&holder["timings"]);
             usages.push(&holder["usage"]);
+        }
+        if self.error.is_none() {
+            self.error = error_of(value);
         }
         // Usage first, so that timings, which Siphon computes from the same counts, win.
         for u in usages {
@@ -208,6 +231,7 @@ mod tests {
             ttft_ms: Some(250.5),
             decode_tps: Some(180.25),
             tokens_per_round: Some(3.5),
+            error: None,
         }
     }
 
@@ -291,6 +315,46 @@ mod tests {
         let mut meter = Meter::new(Some("application/json"));
         meter.feed(br#"{"input_tokens": 42}"#);
         assert_eq!(meter.finish(), Stats::default());
+    }
+
+    #[test]
+    fn leading_whitespace_before_a_padded_body() {
+        let timings: Value = serde_json::from_str(TIMINGS).unwrap();
+        let mut meter = Meter::new(Some("application/json"));
+        for _ in 0..5 {
+            meter.feed(b" ");
+        }
+        meter.feed(json!({"timings": timings}).to_string().as_bytes());
+        assert_eq!(meter.finish(), expected());
+    }
+
+    #[test]
+    fn error_bodies_under_200() {
+        for (body, message) in [
+            (
+                json!({"error": {"message": "engine failed", "type": "api_error"}}),
+                "engine failed",
+            ),
+            (
+                json!({"type": "error", "error": {"type": "api_error", "message": "boom"}}),
+                "boom",
+            ),
+        ] {
+            let mut meter = Meter::new(Some("application/json"));
+            meter.feed(format!("   {body}").as_bytes());
+            assert_eq!(meter.finish().error.as_deref(), Some(message));
+        }
+        let mut meter = Meter::new(Some("application/json"));
+        meter.feed(br#"{"object": "response", "status": "completed", "error": null}"#);
+        assert_eq!(meter.finish().error, None);
+        let mut meter = Meter::new(Some("text/event-stream"));
+        stream(
+            &mut meter,
+            &[
+                json!({"type": "response.failed", "response": {"error": {"message": "out of memory"}}}),
+            ],
+        );
+        assert_eq!(meter.finish().error.as_deref(), Some("out of memory"));
     }
 
     #[test]

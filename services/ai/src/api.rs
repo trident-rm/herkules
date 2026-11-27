@@ -211,13 +211,13 @@ async fn forward(
 ) -> Response {
     let path = record.route.clone();
     let Some(model) = record.model.clone() else {
-        record.finish(400, Stats::default(), false, false, None);
+        record.finish(Outcome::refused(400));
         return error(&path, StatusCode::BAD_REQUEST, "model is required");
     };
     let entry: Arc<Entry> = match app.backends.pick(&model) {
         Pick::Backend(entry) => entry,
         Pick::Unknown => {
-            record.finish(404, Stats::default(), false, false, None);
+            record.finish(Outcome::refused(404));
             return error(
                 &path,
                 StatusCode::NOT_FOUND,
@@ -225,7 +225,7 @@ async fn forward(
             );
         }
         Pick::Unavailable => {
-            record.finish(503, Stats::default(), false, false, None);
+            record.finish(Outcome::refused(503));
             return error(
                 &path,
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -259,7 +259,10 @@ async fn forward(
         Ok(upstream) => upstream,
         Err(e) => {
             tracing::warn!(backend = %entry.backend.name, "upstream: {}", e.without_url());
-            record.finish(502, Stats::default(), false, false, None);
+            record.finish(Outcome {
+                error: Some("the backend did not answer".into()),
+                ..Outcome::refused(502)
+            });
             return error(&path, StatusCode::BAD_GATEWAY, "the backend did not answer");
         }
     };
@@ -279,14 +282,14 @@ async fn forward(
         }
     }
     let keep = (record.level == levels::FULL).then(|| Capped::new(app.config.log_body_bytes));
-    let tap = Tap {
-        inner: Box::pin(upstream.bytes_stream()),
-        meter: Some(meter),
+    let tap = Tap::new(
+        upstream.bytes_stream(),
+        meter,
         keep,
-        status: status.as_u16(),
-        record: Some(record),
-        _inflight: inflight,
-    };
+        status.as_u16(),
+        Box::new(move |outcome| record.finish(outcome)),
+        Some(inflight),
+    );
     response
         .body(Body::from_stream(tap))
         .unwrap_or_else(|_| error(&path, StatusCode::BAD_GATEWAY, "bad upstream response"))
@@ -390,18 +393,19 @@ pub struct Record {
 }
 
 impl Record {
-    fn finish(
-        &mut self,
-        status: u16,
-        stats: Stats,
-        streamed: bool,
-        cancelled: bool,
-        response: Option<Capped>,
-    ) {
+    fn finish(&mut self, outcome: Outcome) {
         if self.done {
             return;
         }
         self.done = true;
+        let Outcome {
+            status,
+            stats,
+            streamed,
+            cancelled,
+            error,
+            response,
+        } = outcome;
         let row = NewRequest {
             at: self.at,
             sub: self.owner.sub.clone(),
@@ -415,6 +419,7 @@ impl Record {
             streamed,
             cancelled,
             effort: self.effort.take(),
+            error: error.or_else(|| stats.error.clone()),
             stats,
             level: self.level,
         };
@@ -440,7 +445,35 @@ impl Record {
 
 impl Drop for Record {
     fn drop(&mut self) {
-        self.finish(499, Stats::default(), false, true, None);
+        self.finish(Outcome {
+            cancelled: true,
+            ..Outcome::refused(499)
+        });
+    }
+}
+
+/// How a request ended, for its log row.
+pub struct Outcome {
+    status: u16,
+    stats: Stats,
+    streamed: bool,
+    /// The client left before the response ended.
+    cancelled: bool,
+    /// The gateway's own error, such as an upstream that stopped sending.
+    error: Option<String>,
+    response: Option<Capped>,
+}
+
+impl Outcome {
+    fn refused(status: u16) -> Self {
+        Self {
+            status,
+            stats: Stats::default(),
+            streamed: false,
+            cancelled: false,
+            error: None,
+            response: None,
+        }
     }
 }
 
@@ -458,30 +491,63 @@ fn compress(request: &[u8], cap: usize, response: &Capped) -> NewBodies {
     }
 }
 
-/// The response body: passes each chunk to the client as it arrives, reads usage and
-/// timings from it, keeps it for a `full` log, and writes the log row when it ends.
+/// The HTTP client for backends: connections time out after 10 s, and a response that sends
+/// no byte for `idle` fails. There is no total timeout, since generations run long; Siphon
+/// sends keep-alive bytes well within `idle`, streamed or not.
+pub fn upstream_client(idle: std::time::Duration) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .read_timeout(idle)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+}
+
+type Finish = Box<dyn FnOnce(Outcome) + Send>;
+
+/// The response body: passes each chunk to the client as it arrives, never holding a whole
+/// body, reads usage and timings from the bytes, keeps them for a `full` log, and reports how
+/// the response ended.
 struct Tap {
     inner: Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>,
     meter: Option<Meter>,
     keep: Option<Capped>,
     status: u16,
-    record: Option<Record>,
-    _inflight: Inflight,
+    done: Option<Finish>,
+    _inflight: Option<Inflight>,
 }
 
 impl Tap {
-    fn finish(&mut self, cancelled: bool) {
-        let (Some(mut record), Some(meter)) = (self.record.take(), self.meter.take()) else {
+    fn new(
+        inner: impl Stream<Item = reqwest::Result<Bytes>> + Send + 'static,
+        meter: Meter,
+        keep: Option<Capped>,
+        status: u16,
+        done: Finish,
+        inflight: Option<Inflight>,
+    ) -> Self {
+        Self {
+            inner: Box::pin(inner),
+            meter: Some(meter),
+            keep,
+            status,
+            done: Some(done),
+            _inflight: inflight,
+        }
+    }
+
+    fn finish(&mut self, cancelled: bool, error: Option<String>) {
+        let (Some(done), Some(meter)) = (self.done.take(), self.meter.take()) else {
             return;
         };
         let streamed = meter.streamed();
-        record.finish(
-            self.status,
-            meter.finish(),
+        done(Outcome {
+            status: self.status,
+            stats: meter.finish(),
             streamed,
             cancelled,
-            self.keep.take(),
-        );
+            error,
+            response: self.keep.take(),
+        });
     }
 }
 
@@ -499,9 +565,13 @@ impl Stream for Tap {
                     keep.push(chunk);
                 }
             }
-            // An upstream failure mid-body ends the client's response too.
-            Poll::Ready(Some(Err(_))) => self.finish(true),
-            Poll::Ready(None) => self.finish(false),
+            // An upstream failure mid-body, such as the idle timeout, ends the client's
+            // response too.
+            Poll::Ready(Some(Err(e))) => {
+                let message = format!("upstream: {}", without_url(e));
+                self.finish(false, Some(message));
+            }
+            Poll::Ready(None) => self.finish(false, None),
             Poll::Pending => {}
         }
         polled
@@ -510,8 +580,19 @@ impl Stream for Tap {
 
 impl Drop for Tap {
     fn drop(&mut self) {
-        self.finish(true);
+        self.finish(true, None);
     }
+}
+
+fn without_url(error: &reqwest::Error) -> String {
+    let mut text = error.to_string();
+    if let Some(url) = error.url() {
+        text = text.replace(url.as_str(), "backend");
+    }
+    if error.is_timeout() {
+        text.push_str(" (idle timeout)");
+    }
+    text
 }
 
 #[cfg(test)]
@@ -585,6 +666,109 @@ mod tests {
         assert_eq!(anthropic.status(), StatusCode::UNAUTHORIZED);
         let openai = error("/v1/chat/completions", StatusCode::NOT_FOUND, "no");
         assert_eq!(openai.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A backend that sends a 200 at once, then each `(delay, bytes)` step, then closes.
+    async fn trickling_backend(steps: Vec<(std::time::Duration, &'static [u8])>) -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            let mut byte = [0; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).await.unwrap();
+                head.push(byte[0]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            for (delay, bytes) in steps {
+                tokio::time::sleep(delay).await;
+                if socket.write_all(bytes).await.is_err() {
+                    return;
+                }
+                socket.flush().await.unwrap();
+            }
+        });
+        format!("http://{address}/v1/chat/completions")
+    }
+
+    async fn through_tap(
+        url: &str,
+    ) -> (
+        Vec<(std::time::Duration, Bytes)>,
+        Result<(), String>,
+        Outcome,
+    ) {
+        let client = upstream_client(std::time::Duration::from_secs(2)).unwrap();
+        let started = Instant::now();
+        let upstream = client.get(url).send().await.unwrap();
+        let meter = Meter::new(Some("application/json"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tap = Tap::new(
+            upstream.bytes_stream(),
+            meter,
+            None,
+            200,
+            Box::new(move |outcome| tx.send(outcome).unwrap()),
+            None,
+        );
+        let mut body = Body::from_stream(tap).into_data_stream();
+        let mut chunks = Vec::new();
+        let mut result = Ok(());
+        while let Some(chunk) = body.next().await {
+            match chunk {
+                Ok(chunk) => chunks.push((started.elapsed(), chunk)),
+                Err(e) => {
+                    result = Err(e.to_string());
+                    break;
+                }
+            }
+        }
+        drop(body);
+        (chunks, result, rx.recv().unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_trickling_upstream_gets_through_under_the_idle_timeout() {
+        let second = std::time::Duration::from_secs(1);
+        let json: &'static [u8] =
+            br#"{"usage":{"prompt_tokens":3,"completion_tokens":2},"timings":{"prompt_n":3,"cache_n":0,"predicted_n":2,"ttft_ms":5000.0}}"#;
+        let mut steps = vec![(second, &b" "[..]); 5];
+        steps.push((second, json));
+        let url = trickling_backend(steps).await;
+        let (chunks, result, outcome) = through_tap(&url).await;
+        result.unwrap();
+        // Each byte reaches the client as it arrives, not when the body ends.
+        assert!(
+            chunks[0].0 < std::time::Duration::from_millis(1900),
+            "{:?}",
+            chunks[0].0
+        );
+        let body: Vec<u8> = chunks.iter().flat_map(|(_, c)| c.to_vec()).collect();
+        assert!(body.starts_with(b"     {"));
+        assert!(serde_json::from_slice::<Value>(&body).is_ok());
+        assert_eq!(outcome.stats.output_tokens, Some(2));
+        assert_eq!(outcome.stats.ttft_ms, Some(5000.0));
+        assert!(!outcome.cancelled && outcome.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_upstream_silent_past_the_idle_timeout_fails_as_an_error() {
+        let url = trickling_backend(vec![
+            (std::time::Duration::from_millis(200), &b" "[..]),
+            (std::time::Duration::from_secs(3), &b"{}"[..]),
+        ])
+        .await;
+        let (chunks, result, outcome) = through_tap(&url).await;
+        assert_eq!(chunks.len(), 1);
+        assert!(result.is_err());
+        let error = outcome.error.unwrap();
+        assert!(error.contains("idle timeout"), "{error}");
+        assert!(!outcome.cancelled);
     }
 
     #[test]

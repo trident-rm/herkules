@@ -210,6 +210,7 @@ pub struct NewRequest {
     pub streamed: bool,
     pub cancelled: bool,
     pub effort: Option<String>,
+    pub error: Option<String>,
     pub stats: Stats,
     pub level: &'static str,
 }
@@ -232,8 +233,9 @@ pub async fn insert_request(
     let (id,): (i64,) = sqlx::query_as(
         "insert into requests (at, sub, key_id, model, backend, method, route, status, duration_ms,
            streamed, cancelled, effort, prompt_tokens, cached_tokens, output_tokens, ttft_ms,
-           decode_tps, tokens_per_round, level)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+           decode_tps, tokens_per_round, level, error)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
+           $20)
          returning id",
     )
     .bind(row.at)
@@ -255,6 +257,7 @@ pub async fn insert_request(
     .bind(row.stats.decode_tps)
     .bind(row.stats.tokens_per_round)
     .bind(row.level)
+    .bind(&row.error)
     .fetch_one(&mut *tx)
     .await?;
     if let Some(b) = bodies {
@@ -294,6 +297,7 @@ pub struct RequestRow {
     pub streamed: bool,
     pub cancelled: bool,
     pub effort: Option<String>,
+    pub error: Option<String>,
     pub prompt_tokens: Option<i64>,
     pub cached_tokens: Option<i64>,
     pub output_tokens: Option<i64>,
@@ -313,7 +317,7 @@ pub async fn requests(
 ) -> sqlx::Result<Vec<RequestRow>> {
     sqlx::query_as(
         "select r.id, r.at, r.sub, k.name as key_name, r.model, r.backend, r.method, r.route,
-           r.status, r.duration_ms, r.streamed, r.cancelled, r.effort, r.prompt_tokens,
+           r.status, r.duration_ms, r.streamed, r.cancelled, r.effort, r.error, r.prompt_tokens,
            r.cached_tokens, r.output_tokens, r.ttft_ms, r.decode_tps, r.tokens_per_round, r.level,
            exists (select 1 from request_bodies b where b.request_id = r.id) as has_body
          from requests r left join api_keys k on k.id = r.key_id
@@ -389,7 +393,7 @@ pub struct Performance {
 }
 
 /// Median TTFT, decode speed and tokens per round per model and backend, over successful
-/// generations of the last `hours` hours.
+/// generations of the last `hours` hours: status below 400 and no error in the body.
 pub async fn performance(db: &PgPool, hours: i32) -> sqlx::Result<Vec<Performance>> {
     sqlx::query_as(
         "select model, backend, count(*) as requests,
@@ -397,7 +401,8 @@ pub async fn performance(db: &PgPool, hours: i32) -> sqlx::Result<Vec<Performanc
            percentile_cont(0.5) within group (order by decode_tps) as decode_tps,
            percentile_cont(0.5) within group (order by tokens_per_round) as tokens_per_round
          from requests
-         where at > now() - make_interval(hours => $1) and status < 400 and output_tokens > 0
+         where at > now() - make_interval(hours => $1) and status < 400 and error is null
+           and output_tokens > 0
          group by 1, 2 order by 1, 2",
     )
     .bind(hours)

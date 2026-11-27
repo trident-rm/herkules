@@ -22,6 +22,14 @@ The gateway reads `model` from the JSON body to choose a backend and forwards th
 
 There are no quotas or rate limits.
 
+### Timeouts
+
+Cloudflare cancels a proxied request with error 524 when the origin sends no byte for 100 seconds, and both the client→gateway and gateway→backend hops pass through Cloudflare. Siphon sends bytes well within that: SSE comments or pings every 5 to 15 seconds in a stream, and, for a reply that is not streamed, status 200 after a grace period, then a space every 15 seconds, then the JSON. JSON allows the leading whitespace.
+
+The gateway passes those bytes on as they arrive and never holds a whole body; it reads usage from a copy of the bytes. A backend response that sends nothing for `AI_UPSTREAM_IDLE_SECS` (90) fails and is logged as an error. There is no total request timeout. Connecting to a backend times out after 10 seconds. Caddy adds no timeout of its own on these hosts.
+
+A failure after Siphon has sent its 200 arrives as an error object in the body. The log records the error from the body, so the request counts as failed although its status is 200.
+
 ## Keys and membership
 
 A key is `sk-hk-` followed by 43 base64url characters (32 random bytes). The database stores its SHA-256, the owner's Herkules `sub`, a name, a 12-character prefix for display, and created, last-used and revoked times. The portal shows a new key once.
@@ -90,7 +98,7 @@ The Cloudflare API token needs exactly:
 
 ## Request log
 
-Each forwarded request writes one `requests` row: time, user, key, model, backend, method, route, status, duration, whether it streamed, whether the client cancelled, reasoning effort, prompt tokens (the whole prompt, cached tokens included), cached tokens, output tokens, TTFT, decode tok/s, tokens per round, and its logging level. A request refused before forwarding, for a missing or unknown key or a disallowed route, writes no row.
+Each forwarded request writes one `requests` row: time, user, key, model, backend, method, route, status, duration, whether it streamed, whether the client cancelled, an error message if the body or the gateway reported one, reasoning effort, prompt tokens (the whole prompt, cached tokens included), cached tokens, output tokens, TTFT, decode tok/s, tokens per round, and its logging level. A request refused before forwarding, for a missing or unknown key or a disallowed route, writes no row.
 
 Token counts and speeds come from Siphon's llama.cpp-style `timings`: at the top level of a plain body, or in a stream's late event. When a response has no `timings`, they come from `usage` in OpenAI's, Anthropic's or the Responses API's shape. The effort comes from `reasoning_effort`, `reasoning.effort` or `output_config.effort`; `thinking: {"type": "disabled"}` records `none`. A client that leaves before the response begins is logged with status 499.
 
@@ -118,6 +126,7 @@ The level is the owner's override if an admin set one, else the model's default 
 | `AI_MAX_REQUEST_BYTES`              | 67108864         | Largest request body, images included.                                                       |
 | `AI_LOG_BODY_BYTES`                 | 1048576          | Bytes of each body kept at the `full` level.                                                 |
 | `AI_LOG_RETENTION_DAYS`             | 30               | Days to keep stored bodies.                                                                  |
+| `AI_UPSTREAM_IDLE_SECS`             | 90               | Seconds a backend response may send nothing before it fails.                                 |
 | `AI_DB_CONNECTIONS`                 | 5                | Postgres pool size.                                                                          |
 
 `GET /healthz` answers on any host, for the container health check.

@@ -56,6 +56,8 @@ create table requests (
   streamed boolean not null,
   cancelled boolean not null,
   effort text,
+  -- An upstream error, including an error object in a 200 body, or the gateway's own.
+  error text,
   prompt_tokens bigint,
   cached_tokens bigint,
   output_tokens bigint,

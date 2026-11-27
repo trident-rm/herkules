@@ -26,6 +26,8 @@ pub struct Config {
     pub max_request_bytes: usize,
     pub log_body_bytes: usize,
     pub log_retention_days: i32,
+    /// A backend response that sends no byte for this long fails.
+    pub upstream_idle: std::time::Duration,
 }
 
 /// The Cloudflare account the gateway creates tunnels in, from a server-owned file.
@@ -160,6 +162,7 @@ impl Config {
             max_request_bytes: number("AI_MAX_REQUEST_BYTES", 64 << 20)?,
             log_body_bytes: number("AI_LOG_BODY_BYTES", 1 << 20)?,
             log_retention_days: number("AI_LOG_RETENTION_DAYS", 30)?,
+            upstream_idle: std::time::Duration::from_secs(number("AI_UPSTREAM_IDLE_SECS", 90)?),
         })
     }
 }

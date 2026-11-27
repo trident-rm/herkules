@@ -8,6 +8,7 @@ describe("snippets", () => {
 
   it("points OpenAI clients, Codex and Pi at /v1 and Anthropic clients at the origin", () => {
     expect(byId("openai")).toContain("OPENAI_BASE_URL=https://ai-api.example/v1\n");
+    expect(byId("anthropic")).toContain("API_TIMEOUT_MS=1800000");
     expect(byId("codex")).toContain('base_url = "https://ai-api.example/v1"');
     expect(byId("codex")).toContain('wire_api = "responses"');
     expect(byId("anthropic")).toContain("ANTHROPIC_BASE_URL=https://ai-api.example\n");

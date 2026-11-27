@@ -15,7 +15,11 @@ export function snippets(apiOrigin: string, model: string, key: string): Snippet
       id: "openai",
       title: "OpenAI API",
       file: "shell",
-      text: `export OPENAI_BASE_URL=${v1}\nexport OPENAI_API_KEY=${key}\n# model: ${model}`,
+      text: [
+        `export OPENAI_BASE_URL=${v1}`,
+        `export OPENAI_API_KEY=${key}`,
+        `# model: ${model}. OpenAI's SDKs stop a request after 10 minutes; raise their timeout for longer runs.`,
+      ].join("\n"),
     },
     {
       id: "anthropic",
@@ -26,6 +30,8 @@ export function snippets(apiOrigin: string, model: string, key: string): Snippet
         `export ANTHROPIC_AUTH_TOKEN=${key}`,
         `export ANTHROPIC_MODEL=${model}`,
         `export ANTHROPIC_DEFAULT_HAIKU_MODEL=${model}`,
+        "# Long prefills can take minutes; Claude Code's default is 10 minutes per request.",
+        "export API_TIMEOUT_MS=1800000",
       ].join("\n"),
     },
     {
