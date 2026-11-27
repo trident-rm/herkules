@@ -1,0 +1,5 @@
+# Both AI hostnames (ai-api and ai-portal): the gateway tells them apart by Host.
+# No buffering, so streamed tokens and SSE keep-alives pass through as they arrive.
+reverse_proxy ai:4010 {
+	flush_interval -1
+}

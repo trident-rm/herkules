@@ -1,19 +1,25 @@
 # syntax=docker/dockerfile:1.7
-# Application images: --target auth | bbs | bbs-web | platform.
+# Application images: --target auth | bbs | bbs-web | ai | platform.
 # The build stage installs the whole workspace once; runtime images get only
-# `pnpm deploy --prod` output (auth, bbs) or static assets and routes (platform).
+# `pnpm deploy --prod` output (auth, bbs), a Rust binary with static assets (bbs-web, ai)
+# or static assets and routes (platform).
 
-# Build a static musl binary; Node remains for migrations/import and rollback.
-FROM rust:1.95-alpine AS bbs-rust-build
+# Static musl binaries for the whole Cargo workspace; Node remains for BBS migrations/import
+# and rollback.
+FROM rust:1.95-alpine AS rust-build
 RUN apk add --no-cache build-base cmake perl protobuf
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY apps/bbs/rust apps/bbs/rust
 COPY packages/auth-rust packages/auth-rust
 COPY packages/feishu-rust packages/feishu-rust
+COPY services/ai/Cargo.toml services/ai/Cargo.toml
+COPY services/ai/src services/ai/src
+COPY services/ai/migrations services/ai/migrations
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo build --release -p herkules-bbs --locked && cp target/release/herkules-bbs /herkules-bbs
+    cargo build --release -p herkules-bbs -p herkules-ai --locked \
+ && cp target/release/herkules-bbs /herkules-bbs && cp target/release/herkules-ai /herkules-ai
 
 FROM node:24-alpine AS base
 RUN npm install -g pnpm@11.24.0
@@ -65,7 +71,7 @@ CMD ["node", "dist/main.mjs"]
 FROM runtime AS bbs
 ENV PORT=3003 MIGRATIONS_DIR=/app/drizzle WEB_DIR=/app/dist/client BBS_RUST_NATIVE=true
 COPY --from=build --chown=node:node /out/bbs /app
-COPY --from=bbs-rust-build /herkules-bbs /usr/local/bin/herkules-bbs
+COPY --from=rust-build /herkules-bbs /usr/local/bin/herkules-bbs
 USER root
 RUN apk add --no-cache ca-certificates
 USER node
@@ -81,13 +87,27 @@ FROM alpine:3.23 AS bbs-web
 RUN apk add --no-cache ca-certificates && addgroup -g 1000 bbs && adduser -D -u 1000 -G bbs bbs
 WORKDIR /app
 ENV WEB_DIR=/app/dist/client BBS_RUST_LISTEN=0.0.0.0:3003
-COPY --from=bbs-rust-build /herkules-bbs /usr/local/bin/herkules-bbs
+COPY --from=rust-build /herkules-bbs /usr/local/bin/herkules-bbs
 COPY --from=build --chown=bbs:bbs /app/apps/bbs/dist/client /app/dist/client
 USER bbs
 EXPOSE 3003
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3003/healthz || exit 1
 ENTRYPOINT ["/usr/local/bin/herkules-bbs"]
+
+# AI gateway and portal (services/ai): one Rust process for ai-api and ai-portal.
+# It applies its own migrations at start; its database is separate from the others.
+FROM alpine:3.23 AS ai
+RUN apk add --no-cache ca-certificates && addgroup -g 1000 ai && adduser -D -u 1000 -G ai ai
+WORKDIR /app
+ENV WEB_DIR=/app/dist/client AI_LISTEN=0.0.0.0:4010
+COPY --from=rust-build /herkules-ai /usr/local/bin/herkules-ai
+COPY --from=build --chown=ai:ai /app/services/ai/dist/client /app/dist/client
+USER ai
+EXPOSE 4010
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --start-interval=2s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:4010/healthz || exit 1
+ENTRYPOINT ["/usr/local/bin/herkules-ai"]
 
 # Static platform artifact consumed by herkules-infra; never run as a service.
 FROM scratch AS platform

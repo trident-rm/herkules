@@ -15,12 +15,12 @@ variable "SHORT_SHA" {
 target "docker-metadata-action" {}
 
 group "default" {
-  targets = ["auth", "bbs", "bbs-web", "platform"]
+  targets = ["auth", "bbs", "bbs-web", "ai", "platform"]
 }
 
 target "image" {
   matrix = {
-    image = ["auth", "bbs", "bbs-web", "platform"]
+    image = ["auth", "bbs", "bbs-web", "ai", "platform"]
   }
   name       = image
   inherits   = ["docker-metadata-action"]
@@ -32,7 +32,7 @@ target "image" {
     "ghcr.io/${REPOSITORY}/${image}:latest",
     "ghcr.io/${REPOSITORY}/${image}:sha-${SHORT_SHA}",
   ]
-  cache-from = [for scope in ["auth", "bbs", "bbs-web", "platform"] : "type=gha,scope=${scope}"]
+  cache-from = [for scope in ["auth", "bbs", "bbs-web", "ai", "platform"] : "type=gha,scope=${scope}"]
   # One scope per image: concurrent exports to a single GHA scope overwrite each other.
   cache-to = ["type=gha,scope=${image},mode=max"]
 }

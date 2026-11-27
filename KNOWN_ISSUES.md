@@ -407,6 +407,28 @@ that these files still live in the application checkout.
   lines later is dead.
 - **Fix**: append a per-context result in both branches; delete the duplicate write.
 
+## `services/ai`
+
+### 46. Tunnel backends have run only against a mock Cloudflare API
+
+`reported`. `services/ai/src/cloudflare.rs` creates a tunnel, its ingress, its token and a
+CNAME, and deletes them after checking their ownership mark. Its tests run against a local
+server that answers with the response shapes from Cloudflare's API reference. Nothing has
+called the real API: unknown are the exact error bodies, whether the `gpu-*` partial
+wildcard on the Access application matches every generated hostname, and the token
+permission set in practice. Before relying on it, add one machine and remove it with a real
+token, then check `curl -s -o /dev/null -w '%{http_code}' https://gpu-<id>.<zone>/health`
+answers 403 without the service token.
+
+### 47. Gateway state that steers routing is per process
+
+`confirmed`. Open-request counts per backend, the 20-second membership cache, the
+logging-level overrides and the backend set live in memory in one `herkules-ai` process
+(`src/backends.rs`, `src/membership.rs`, `src/levels.rs`). A second replica would route
+without the first one's open requests and would not see an admin's state change or new
+tunnel backend until it restarts. Run one replica, or move these reads to Postgres before
+scaling out.
+
 ## Smaller, worth batching
 
 - `apps/bbs/rust/src/http.rs` — native REST validation preserves status/error codes,

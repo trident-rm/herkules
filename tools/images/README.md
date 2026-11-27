@@ -1,12 +1,13 @@
 # Application image contract
 
-The root Dockerfile publishes `auth`, `bbs`, `bbs-web` and `platform`. After all checks
-pass, CI builds all four in one shared BuildKit graph when image inputs change
+The root Dockerfile publishes `auth`, `bbs`, `bbs-web`, `ai` and `platform`. After all checks
+pass, CI builds all five in one shared BuildKit graph when image inputs change
 (or on a manual run), then emits the `application` artifact.
 Production promotion is a separate reviewed change in `herkules-infra`.
 
 `platform` is an artifact-only image: `/srv` contains the built frontend and `/caddy`
-contains `platform.caddy`, `bbs.caddy`, and nested `mcp/*.caddy`.
+contains `platform.caddy`, `bbs.caddy`, `ai.caddy`, and nested `mcp/*.caddy`.
+`ai.caddy` belongs inside both AI hostname blocks; the gateway routes by `Host`.
 Do not start it as a container. Infrastructure copies these paths into its own Caddy
 image and imports the fragments inside the corresponding site blocks. Hostnames,
 TLS, global options and common headers belong to infrastructure. Preserve these paths
@@ -29,3 +30,10 @@ Both images carry the same frontend build under `/app/dist/client`.
 Before publication, CI builds the actual `bbs` and `bbs-web` images and runs
 `bbs-web.test.sh` with disposable Postgres. Schema preparation must finish before
 starting the Rust web service. Production Compose sequencing belongs to infrastructure.
+
+`ai` is the AI gateway and portal (`services/ai`): one Rust binary as PID 1, nonroot,
+with the Vite-built portal under `/app/dist/client`. It applies its own migrations to its
+own database at start and listens on port 4010. The `rust-build` stage compiles the whole
+Cargo workspace once for both `bbs-web` and `ai`, so a change to any workspace crate
+rebuilds both. Infrastructure must accept `images.ai` in `application.json` before it
+promotes a manifest that carries it.
