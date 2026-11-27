@@ -28,6 +28,7 @@ import {
   FEISHU_SCOPES,
   FEISHU_ERRORS,
   feishuEmail,
+  feishuPkce,
   feishuSubject,
   type Feishu,
   type FeishuProfile,
@@ -492,6 +493,7 @@ export function authOptions(deps: AuthDeps) {
                 },
               ],
             }),
+            feishuPkce,
           ]
         : []),
       jwt({
