@@ -254,6 +254,12 @@ export const resourcePages = pgTable(
   (t) => [primaryKey({ columns: [t.id, t.staged] })],
 );
 
+/** Completed changes awaiting a Feishu delivery. The bot consumes them transactionally. */
+export const resourceUpdates = pgTable("resource_updates", {
+  syncedAt: ms("synced_at").primaryKey(),
+  changes: jsonb("changes").notNull(),
+});
+
 /**
  * APP-OWNED singleton: which RENDER_VERSION / NORMALIZE_VERSION / TITLE_VERSION produced the derived
  * columns on disk. Absent (fresh database, or first boot after this migration) means "unknown":
@@ -451,7 +457,7 @@ export const botDeliveries = pgTable(
   "bot_deliveries",
   {
     id: text("id").primaryKey(),
-    kind: text("kind").notNull(), // article|digest|reply|update
+    kind: text("kind").notNull(), // article|digest|reply|update|resources
     logicalKey: text("logical_key").notNull(),
     chatId: text("chat_id").notNull(),
     replyToMessageId: text("reply_to_message_id"),
@@ -474,7 +480,10 @@ export const botDeliveries = pgTable(
     uniqueIndex("bot_deliveries_logical_key_uq").on(t.logicalKey),
     uniqueIndex("bot_deliveries_uuid_uq").on(t.uuid),
     index("bot_deliveries_due_idx").on(t.state, t.nextAttemptAt, t.scheduledAt),
-    check("bot_deliveries_kind_ck", sql`${t.kind} in ('article', 'digest', 'reply', 'update')`),
+    check(
+      "bot_deliveries_kind_ck",
+      sql`${t.kind} in ('article', 'digest', 'reply', 'update', 'resources')`,
+    ),
     check(
       "bot_deliveries_state_ck",
       sql`${t.state} in ('pending', 'leased', 'sent', 'cancelled', 'permanent')`,

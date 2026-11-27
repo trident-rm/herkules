@@ -10,7 +10,7 @@ use serde_json::json;
 use sqlx::{PgPool, types::Json};
 use tokio::sync::watch;
 
-use crate::resources::{Node, Page};
+use crate::resources::{ChangedPage, Node, Page, Update};
 
 use super::{
     Error, Result,
@@ -24,6 +24,7 @@ const REVISIONS_PER_REQUEST: usize = 127;
 const CHECK_INTERVAL: TimeDelta = TimeDelta::days(1);
 const RETRY_INTERVAL: Duration = Duration::from_secs(3600);
 const PAGE_SPACING: Duration = Duration::from_secs(5);
+const NOTICE_LINKS: usize = 6;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,6 +200,10 @@ async fn stage(pool: &PgPool, page: Page) -> Result<()> {
 
 async fn publish(pool: &PgPool, tree: &[Node], ids: &[i64], promote: &[String]) -> Result<()> {
     let mut tx = pool.begin().await?;
+    let old_tree: Option<Json<Vec<Node>>> =
+        sqlx::query_scalar("SELECT tree FROM resource_catalog WHERE id = 1 FOR UPDATE")
+            .fetch_optional(&mut *tx)
+            .await?;
     if !promote.is_empty() {
         sqlx::query(
             "INSERT INTO resource_pages (id, staged, title, html, attachments, updated_at) \
@@ -216,16 +221,67 @@ async fn publish(pool: &PgPool, tree: &[Node], ids: &[i64], promote: &[String]) 
         .bind(&ids)
         .execute(&mut *tx)
         .await?;
+    let synced_at = Utc::now();
     sqlx::query(
         "INSERT INTO resource_catalog (id, tree, synced_at) VALUES (1, $1, $2) \
          ON CONFLICT (id) DO UPDATE SET tree = excluded.tree, synced_at = excluded.synced_at",
     )
     .bind(Json(tree))
-    .bind(Utc::now())
+    .bind(synced_at)
     .execute(&mut *tx)
     .await?;
+    if let Some(Json(old_tree)) = old_tree
+        && let Some(changes) = notice(&old_tree, tree, promote)
+    {
+        sqlx::query("INSERT INTO resource_updates (synced_at, changes) VALUES ($1, $2)")
+            .bind(synced_at)
+            .bind(Json(changes))
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(())
+}
+
+fn notice(before: &[Node], after: &[Node], promoted: &[String]) -> Option<Update> {
+    let tree_changed = before != after;
+    if !tree_changed && promoted.is_empty() {
+        return None;
+    }
+    let old: HashSet<_> = flatten(before)
+        .into_iter()
+        .map(|node| node.id.as_str())
+        .collect();
+    let current = flatten(after);
+    let new: HashSet<_> = current.iter().map(|node| node.id.as_str()).collect();
+    let mut changed: HashSet<_> = promoted.iter().map(String::as_str).collect();
+    let updated = changed.intersection(&old).count();
+    let pages = current
+        .into_iter()
+        .filter(|node| changed.remove(node.id.as_str()))
+        .take(NOTICE_LINKS)
+        .map(|node| ChangedPage {
+            id: node.id.clone(),
+            title: node.title.clone(),
+        })
+        .collect();
+    Some(Update {
+        added: new.difference(&old).count(),
+        updated,
+        removed: old.difference(&new).count(),
+        tree_changed,
+        pages,
+    })
+}
+
+fn flatten(tree: &[Node]) -> Vec<&Node> {
+    let mut pending: Vec<_> = tree.iter().rev().collect();
+    let mut nodes = Vec::new();
+    while let Some(node) = pending.pop() {
+        nodes.push(node);
+        pending.extend(node.children.iter().rev());
+    }
+    nodes
 }
 
 async fn next_check(pool: &PgPool) -> Result<Duration> {
@@ -268,6 +324,35 @@ pub(super) async fn work(pool: &PgPool, source: &Source, mut stop: watch::Receiv
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notice_counts_content_and_catalog_changes() {
+        let node = |id: &str, title: &str| Node {
+            id: id.into(),
+            title: title.into(),
+            children: Vec::new(),
+        };
+        let before = [node("2", "Existing"), node("3", "Removed")];
+        assert!(notice(&before, &before, &[]).is_none());
+
+        let renamed = [node("2", "Renamed"), node("3", "Removed")];
+        let tree_only = notice(&before, &renamed, &[]).expect("renaming changes the catalog");
+        assert!(tree_only.tree_changed);
+        assert!(tree_only.pages.is_empty());
+
+        let after = [node("2", "Existing"), node("1", "New")];
+        let update = notice(&before, &after, &["1".into(), "2".into()])
+            .expect("new catalog and bodies are announceable");
+        assert_eq!((update.added, update.updated, update.removed), (1, 1, 1));
+        assert_eq!(
+            update
+                .pages
+                .iter()
+                .map(|page| page.id.as_str())
+                .collect::<Vec<_>>(),
+            ["2", "1"]
+        );
+    }
 
     fn node(key: i64, post: Option<i64>, draft: bool, children: Vec<WikiNode>) -> WikiNode {
         WikiNode {

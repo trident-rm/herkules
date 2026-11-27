@@ -157,7 +157,7 @@ pub async fn run_with(
         .await?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        if sqlx::query("SELECT 1 FROM bot_state LIMIT 0")
+        if sqlx::query("SELECT 1 FROM bot_state, resource_updates LIMIT 0")
             .execute(&pool)
             .await
             .is_ok()

@@ -292,6 +292,5 @@ BBS_RUST_TEST_POSTGRES=postgres://test_user:password@localhost/postgres \
 vp run test:rust:bot
 ```
 
-See [bot migration gates](../BOT_MIGRATION.md) for the compatibility checks and
-remaining SDK aggregate-fragment resource limit. Production still uses Node until
-its infrastructure image selection is changed.
+The Rust bot sends one card for each completed wiki sync with changes. It queues those cards
+through the same outbox as article announcements. [Bot migration gates](../BOT_MIGRATION.md)

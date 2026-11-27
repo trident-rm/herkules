@@ -33,7 +33,7 @@ export type Inbound =
 export interface OutboundEnvelope {
   readonly id: string;
   /** `update` patches the card at `replyToMessageId` instead of sending a new message. */
-  readonly kind: "article" | "digest" | "reply" | "update";
+  readonly kind: "article" | "digest" | "reply" | "update" | "resources";
   /** A chat id (`oc_…`) or, for menu-triggered replies, a user open id (`ou_…`). */
   readonly chatId: string;
   readonly replyToMessageId: string | null;

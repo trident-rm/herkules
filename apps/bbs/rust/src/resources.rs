@@ -10,11 +10,27 @@ pub(crate) fn valid_id(id: &str) -> bool {
         && id.bytes().all(|c| c.is_ascii_digit())
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Node {
     pub id: String,
     pub title: String,
     pub children: Vec<Node>,
+}
+
+/// A single completed wiki sync with changes to announce.
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct Update {
+    pub added: usize,
+    pub updated: usize,
+    pub removed: usize,
+    pub tree_changed: bool,
+    pub pages: Vec<ChangedPage>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct ChangedPage {
+    pub id: String,
+    pub title: String,
 }
 
 #[derive(Debug, Serialize)]

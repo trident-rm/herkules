@@ -48,10 +48,8 @@ Rerun the same directory to resume an interrupted export. The command refreshes 
 
 ## Feishu bot
 
-The Rust image supports `herkules-bbs bot`; production still selects the Node
-bot until the infrastructure switch. [Rust migration gates](BOT_MIGRATION.md)
-record parity and cutover requirements. Both runtimes use the same Postgres tables,
-lock and persisted delivery UUIDs.
+Production runs `herkules-bbs bot` from the Rust image. Both runtimes use the same
+Postgres outbox, lock and persisted delivery UUIDs. [Rust migration gates](BOT_MIGRATION.md)
 
 `bbs bot` connects an internal self-built Feishu app through a WebSocket long connection. It has
 no public callback route. Replies are interactive cards (card schema 2.0); the command table in
@@ -80,6 +78,10 @@ One configured group receives new-article announcements. The first connected boo
 existing corpus as its baseline. Later fetched and indexed posts get at most three immediate
 messages per Hong Kong day; overflow becomes one digest at 09:00 the following day. Bot state,
 inbound deduplication, payloads, attempts, and retry UUIDs live in Postgres and survive restarts.
+
+After a rules and resources sync publishes changes, the Rust bot sends one update card to the
+same group. It links to changed pages and the resource directory. The first sync establishes
+the baseline silently. An imported snapshot establishes the same baseline.
 
 For local use, create `.env.bot` from the commented block in [`.env.example`](.env.example), make
 sure the normal BBS process has applied migrations, then run `vp run bot`. Production setup and
