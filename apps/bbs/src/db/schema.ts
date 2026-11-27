@@ -50,6 +50,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import type { ResourceAttachment, ResourceNode } from "../library/resources.ts";
 
 /** rm-wenku stored Unix milliseconds; precision 3 makes the round-trip exact. */
 const ms = (name: string) => timestamp(name, { withTimezone: true, precision: 3, mode: "date" });
@@ -227,6 +228,36 @@ export const sourceGuardState = pgTable("source_guard_state", {
   sourceId: text("source_id").primaryKey(),
   stateJson: jsonb("state_json").notNull(),
   updatedAt: ms("updated_at").notNull(),
+});
+
+/** The published RoboMaster wiki tree and the last complete check. */
+export const resourceCatalog = pgTable(
+  "resource_catalog",
+  {
+    id: integer("id").primaryKey().default(1),
+    tree: jsonb("tree").$type<ResourceNode[]>().notNull(),
+    syncedAt: ms("synced_at").notNull(),
+  },
+  (t) => [check("resource_catalog_singleton", sql`${t.id} = 1`)],
+);
+
+export const resourcePages = pgTable(
+  "resource_pages",
+  {
+    id: text("id").notNull(),
+    staged: boolean("staged").notNull().default(false),
+    title: text("title").notNull(),
+    html: text("html").notNull(),
+    attachments: jsonb("attachments").$type<ResourceAttachment[]>().notNull(),
+    updatedAt: ms("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.id, t.staged] })],
+);
+
+/** Completed changes awaiting a Feishu delivery. The bot consumes them transactionally. */
+export const resourceUpdates = pgTable("resource_updates", {
+  syncedAt: ms("synced_at").primaryKey(),
+  changes: jsonb("changes").notNull(),
 });
 
 /**
@@ -426,7 +457,7 @@ export const botDeliveries = pgTable(
   "bot_deliveries",
   {
     id: text("id").primaryKey(),
-    kind: text("kind").notNull(), // article|digest|reply|update
+    kind: text("kind").notNull(), // article|digest|reply|update|resources
     logicalKey: text("logical_key").notNull(),
     chatId: text("chat_id").notNull(),
     replyToMessageId: text("reply_to_message_id"),
@@ -449,7 +480,10 @@ export const botDeliveries = pgTable(
     uniqueIndex("bot_deliveries_logical_key_uq").on(t.logicalKey),
     uniqueIndex("bot_deliveries_uuid_uq").on(t.uuid),
     index("bot_deliveries_due_idx").on(t.state, t.nextAttemptAt, t.scheduledAt),
-    check("bot_deliveries_kind_ck", sql`${t.kind} in ('article', 'digest', 'reply', 'update')`),
+    check(
+      "bot_deliveries_kind_ck",
+      sql`${t.kind} in ('article', 'digest', 'reply', 'update', 'resources')`,
+    ),
     check(
       "bot_deliveries_state_ck",
       sql`${t.state} in ('pending', 'leased', 'sent', 'cancelled', 'permanent')`,

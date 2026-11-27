@@ -48,7 +48,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     if !args.is_empty() {
-        return Err(std::io::Error::other("usage: herkules-bbs [work [--once] | bot]").into());
+        return Err(std::io::Error::other(
+            "usage: herkules-bbs [work [--once | --resources-once] | bot]",
+        )
+        .into());
     }
     let config = Config::from_env().map_err(std::io::Error::other)?;
     let pool = PgPoolOptions::new()

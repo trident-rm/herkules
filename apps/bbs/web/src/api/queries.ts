@@ -13,6 +13,18 @@ const MIN = 60_000;
 
 export function createQueries(api: BbsApi) {
   return {
+    resourceCatalog: () =>
+      queryOptions({
+        queryKey: ["bbs", "resource-catalog"] as const,
+        queryFn: () => api.resourceCatalog(),
+        staleTime: 10 * MIN,
+      }),
+    resourcePage: (id: string) =>
+      queryOptions({
+        queryKey: ["bbs", "resource-page", id] as const,
+        queryFn: () => api.resourcePage(id),
+        staleTime: 10 * MIN,
+      }),
     feed: (s: FeedSearch) =>
       infiniteQueryOptions({
         queryKey: ["bbs", "feed", s] as const,

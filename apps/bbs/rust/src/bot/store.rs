@@ -5,12 +5,13 @@ use super::{
 use crate::{
     feed::{FeedError, FeedQuery},
     library::Library,
+    resources::Update,
     search::SearchError,
 };
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
+use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow, types::Json};
 use uuid::Uuid;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -131,6 +132,7 @@ impl Store {
                 overflow += 1
             }
         }
+        self.queue_resource_update(&mut tx, at).await?;
         sqlx::query("UPDATE bot_state SET last_reconciled_at=$1 WHERE id=1")
             .bind(at)
             .execute(&mut *tx)
@@ -140,6 +142,41 @@ impl Store {
             json!({"baseline":false,"immediate":immediate,"overflow":overflow,"ineligible":ineligible,"digests":digests}),
         )
     }
+
+    async fn queue_resource_update(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        let update: Option<(DateTime<Utc>, Json<Update>)> = sqlx::query_as(
+            "SELECT synced_at, changes FROM resource_updates WHERE synced_at <= $1 \
+             ORDER BY synced_at LIMIT 1 FOR UPDATE",
+        )
+        .bind(at)
+        .fetch_optional(&mut **tx)
+        .await?;
+        let Some((synced_at, Json(update))) = update else {
+            return Ok(());
+        };
+        let payload = present::resource_update(&update, &self.origin);
+        insert(
+            tx,
+            "resources",
+            &format!("resources:{}", crate::library::iso(synced_at)),
+            &self.chat,
+            None,
+            &payload,
+            at,
+            at,
+        )
+        .await?;
+        sqlx::query("DELETE FROM resource_updates WHERE synced_at = $1")
+            .bind(synced_at)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+
     pub async fn accept_message(&self, m: &Message, at: DateTime<Utc>) -> Result<&'static str> {
         if command::parse(m) == Command::Ignore {
             return Ok("ignored");

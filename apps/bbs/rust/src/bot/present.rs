@@ -1,5 +1,5 @@
 use super::command::{SPECS, slice, units};
-use crate::library::js_whitespace;
+use crate::{library::js_whitespace, resources::Update};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -387,6 +387,47 @@ pub fn article(a: &Value) -> Payload {
     e.push(row(vec![button("阅读全文", &url, true)]));
     card("RM 文库新文章", e, "green", None)
 }
+
+pub(super) fn resource_update(update: &Update, origin: &str) -> Payload {
+    let counts = [
+        ("新增", update.added),
+        ("更新", update.updated),
+        ("移除", update.removed),
+    ];
+    let mut summary: Vec<_> = counts
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(label, count)| format!("{label} {count} 篇"))
+        .collect();
+    if update.tree_changed {
+        summary.push("目录有调整".into());
+    }
+    let mut elements = vec![markdown(summary.join(" · "))];
+    if !update.pages.is_empty() {
+        let pages = update
+            .pages
+            .iter()
+            .map(|page| {
+                format!(
+                    "- {}",
+                    link(
+                        &clip(&page.title, 100),
+                        &format!("{origin}/resources/{}", page.id)
+                    )
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        elements.push(markdown(pages));
+    }
+    elements.push(row(vec![button(
+        "查看规则与资料",
+        &format!("{origin}/resources"),
+        true,
+    )]));
+    card("RoboMaster 规则与资料更新", elements, "blue", None)
+}
+
 pub fn digest(day: &str, articles: &[Value]) -> Payload {
     let lines = articles
         .iter()

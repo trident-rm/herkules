@@ -19,7 +19,7 @@ use crate::{
     feed::{FeedError, FeedQuery},
     kb::{EntityQuery, KbQuery, entity_key},
     library::{ContentFormat, Library, article_id},
-    reader,
+    reader, resources,
     search::SearchError,
 };
 
@@ -47,6 +47,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/kb/entities/{name}", get(entity))
         .route("/api/kb/entities/{name}/head", get(entity_head))
         .route("/api/status", get(status))
+        .route("/api/resources", get(resource_catalog))
+        .route("/api/resources/{id}", get(resource_page))
         .route("/api/articles/{id}/head", get(head))
         .route("/api/articles/{id}", get(article))
         .route("/api/articles/{id}/content", get(content))
@@ -258,6 +260,7 @@ async fn logout(
 
 pub enum ApiError {
     Invalid,
+    InvalidResource,
     Feed(FeedError),
     Search(SearchError),
     Missing,
@@ -281,6 +284,11 @@ impl IntoResponse for ApiError {
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
                 "invalid article id or content format",
+            ),
+            Self::InvalidResource => error(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid resource id",
             ),
             Self::Feed(FeedError::InvalidQuery) => error(
                 StatusCode::BAD_REQUEST,
@@ -338,6 +346,24 @@ async fn health(State(state): State<AppState>) -> Response {
         Json(json!({ "ok": ok })),
     )
         .into_response()
+}
+
+async fn resource_catalog(
+    State(state): State<AppState>,
+) -> Result<Json<resources::Catalog>, ApiError> {
+    Ok(Json(resources::catalog(state.library.pool()).await?))
+}
+
+async fn resource_page(
+    State(state): State<AppState>,
+    path: Result<Path<String>, PathRejection>,
+) -> Result<Json<resources::Page>, ApiError> {
+    let Path(id) = path.map_err(|_| ApiError::InvalidResource)?;
+    if !resources::valid_id(&id) {
+        return Err(ApiError::InvalidResource);
+    }
+    let page = resources::page(state.library.pool(), &id).await?;
+    Ok(Json(page.ok_or(ApiError::Missing)?))
 }
 
 async fn feed(

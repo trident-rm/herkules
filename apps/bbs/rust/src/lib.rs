@@ -9,6 +9,7 @@ pub mod kb;
 pub mod library;
 pub mod mcp;
 pub mod reader;
+mod resources;
 pub mod search;
 pub mod session;
 pub mod status;

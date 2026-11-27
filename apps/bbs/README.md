@@ -48,10 +48,8 @@ Rerun the same directory to resume an interrupted export. The command refreshes 
 
 ## Feishu bot
 
-The Rust image supports `herkules-bbs bot`; production still selects the Node
-bot until the infrastructure switch. [Rust migration gates](BOT_MIGRATION.md)
-record parity and cutover requirements. Both runtimes use the same Postgres tables,
-lock and persisted delivery UUIDs.
+Production runs `herkules-bbs bot` from the Rust image. Both runtimes use the same
+Postgres outbox, lock and persisted delivery UUIDs. [Rust migration gates](BOT_MIGRATION.md)
 
 `bbs bot` connects an internal self-built Feishu app through a WebSocket long connection. It has
 no public callback route. Replies are interactive cards (card schema 2.0); the command table in
@@ -80,6 +78,10 @@ One configured group receives new-article announcements. The first connected boo
 existing corpus as its baseline. Later fetched and indexed posts get at most three immediate
 messages per Hong Kong day; overflow becomes one digest at 09:00 the following day. Bot state,
 inbound deduplication, payloads, attempts, and retry UUIDs live in Postgres and survive restarts.
+
+After a rules and resources sync publishes changes, the Rust bot sends one update card to the
+same group. It links to changed pages and the resource directory. The first sync establishes
+the baseline silently. An imported snapshot establishes the same baseline.
 
 For local use, create `.env.bot` from the commented block in [`.env.example`](.env.example), make
 sure the normal BBS process has applied migrations, then run `vp run bot`. Production setup and
@@ -139,6 +141,24 @@ All ten tools are read-only and served by the same library layer as the REST API
 - `src/crawl/worker.ts` owns scheduling. Discovery runs at startup and every 10 minutes with up to 30 seconds jitter. Manual `work --once` allows one backfill page, ten fetches, and five refreshes.
 - One worker process runs two supervised loops and holds a Postgres advisory lock. A second worker exits before issuing a source request.
 - The crawler only reads the public RoboMaster forum. It does not log in, bypass access controls, crawl other hosts, generate AI content, or delete articles missing from listings.
+
+## Rules and resources mirror
+
+`/resources` browses Rulebooks, Event Products and Technical Assessment. BBS serves sanitized
+page bodies from Postgres and links to RoboMaster's original files and pages. It stores the wiki
+tree in `resource_catalog` and page bodies in `resource_pages`.
+[RoboMaster Rules/Resources Hub](https://bbs.robomaster.com/wiki/20204847)
+
+The Rust `work` daemon checks the wiki on startup if a sync is due and again 24 hours after each
+successful sync. It reads the navigation tree and requests `updateAt` for its posts in batches.
+It fetches bodies only for new posts and changed timestamps. Body requests run sequentially,
+at least five seconds apart, under the same source guard and background budget as the forum
+crawler. A failed check keeps the published copy and retries after an hour or the source cooldown,
+whichever is later. It reuses any staged bodies whose upstream timestamps still match.
+
+Run the matching `bbs migrate` preparation before updating the web and worker images. To run a
+manual check, stop the daemon first and run `herkules-bbs work --resources-once` with the same
+`DATABASE_URL`. The worker lock prevents concurrent runs.
 
 ## Operational stop condition
 

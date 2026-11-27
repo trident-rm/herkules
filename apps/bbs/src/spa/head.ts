@@ -96,7 +96,7 @@ function cutDescription(text: string): string {
 }
 
 /**
- * Which URLs get real metadata. Two, exactly as rm-wenku had. Everything else: `plain`.
+ * Which detail URLs get real metadata. Everything else uses the site defaults.
  *
  * A `/kb/:name` that does not decode is neither: it names an id no document can
  * match, so it reports `undefined` and the caller answers 404. Collapsing it into
@@ -105,7 +105,7 @@ function cutDescription(text: string): string {
  */
 export function headRouteOf(
   pathname: string,
-): { kind: "article" | "entity"; id: string } | null | undefined {
+): { kind: "article" | "entity" | "resource"; id: string } | null | undefined {
   const article = /^\/articles\/([^/]+)\/?$/.exec(pathname);
   if (article) return { kind: "article", id: article[1]! };
   const entity = /^\/kb\/([^/]+)\/?$/.exec(pathname);
@@ -116,6 +116,8 @@ export function headRouteOf(
       return undefined;
     }
   }
+  const resource = /^\/resources\/([^/]+)\/?$/.exec(pathname);
+  if (resource) return { kind: "resource", id: resource[1]! };
   return null;
 }
 

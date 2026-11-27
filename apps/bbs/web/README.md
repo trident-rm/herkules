@@ -1,6 +1,6 @@
 # BBS web UI
 
-`apps/bbs/web` is the read-only React SPA at `https://bbs.herkules.dev`: feed, ranked search, reader, knowledge base, tags, status and account. It is a static build — `vp -C web build` emits `apps/bbs/dist/client`, and the Hono container serves those files with per-route head injection (`../src/spa/static.ts`, `../src/spa/head.ts`). There is no build-time API base URL: the browser's origin is the app origin.
+`apps/bbs/web` is the read-only React SPA at `https://bbs.herkules.dev`: feed, ranked search, reader, knowledge base, rules and resources, tags, status and account. It is a static build — `vp -C web build` emits `apps/bbs/dist/client`, and the Hono container serves those files with per-route head injection (`../src/spa/static.ts`, `../src/spa/head.ts`). There is no build-time API base URL: the browser's origin is the app origin.
 
 The [Rust migration](../MIGRATION.md) adds an Askama article reader with a server-rendered sidebar. Richer controls will reuse the React/shadcn widgets from `packages/ui`, mounted into designated roots alongside the Rust-rendered content. This Vite build now also emits `src/ssr.css` and `.vite/manifest.json` for that reader, sharing the existing theme and article CSS. The SPA remains the deployed UI until SSR navigation and interactions are complete.
 
@@ -21,7 +21,7 @@ In development the Vite server on :3003 **is** bbs's origin; it proxies `/api`, 
 ## Decisions that bind
 
 - Loaders fetch; screens read the same key back with `useSuspenseQuery` and carry no pending or error branch. `useQuery` survives only for the two reads that are genuinely optional and render without their answer: the reader's AI panel and the header's account chip.
-- Every child route carries its own `errorComponent`. The root deliberately has none, so a failed screen never replaces the header. A `null` from one of the three 404-as-data routes renders `shell/NotFound`, not an error.
+- Every child route carries its own `errorComponent`. The root deliberately has none, so a failed screen never replaces the header. A `null` from a 404-as-data page query renders `shell/NotFound`.
 - `/` and `/search` share a canonical search middleware: `stripDerived` drops `scope=all` and a `group` that is just `groupOf(tag)`, so an href never shows what the schema already knows. `groupOf` mirrors the generated `article_tags.group_name` — `split_part(tag, '/', 1)`, everything before the _first_ slash.
 - `usePageTitle` sets the same string the server injected (`article.title`, not a parsed title part), so a deep link's first paint keeps the injected `<title>` while client navigations update it. The root never touches `document.title`.
 - Response bodies are trusted as `Wire<T>`: one repo compiles both ends, `AppType` is the contract, and `../tests/rpc.test.ts` is where the compile-time claims are pinned. Only the error envelope is parsed.
@@ -68,7 +68,7 @@ Why the document is static and what the server injects into it is in [`../README
 ## Code map
 
 - `src/routes.tsx` is the URL contract and the data dependency of every screen — the browser-side `app.ts`. Read it to answer "what does URL X load". It owns search validation, loaders, the hover-gated AI prefetch, the blank-`/search` redirect, scroll restoration, and the pending / error / not-found triage.
-- `src/api/client.ts` is the only adapter over `hc<AppType>`. It turns the `{ error, error_description }` envelope into an `ApiError` and a 404 into `null` on exactly three routes — article, ai, entity — where a missing id is data; everywhere else a 404 throws. `fetch` is injectable so the contract test drives the real Hono app in process.
+- `src/api/client.ts` is the only adapter over `hc<AppType>`. It turns the `{ error, error_description }` envelope into an `ApiError` and a 404 into `null` for article, AI, entity and resource page reads. `fetch` is injectable so the contract test drives the real Hono app in process.
 - `src/api/queries.ts` is the only query-key factory. Keys are `["bbs", kind, ...args]`, cache policy lives with the key, and `q` travels in the router context rather than a module singleton.
 - `src/url.ts` owns every search-param schema. Nothing else parses `location.search` and nothing builds a query string by hand.
 - `src/shell/` owns the chrome: header, nav, footer, the three-state theme, and `usePageTitle`.

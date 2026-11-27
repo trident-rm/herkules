@@ -377,6 +377,8 @@ export function fakeLibrary(): Library & { readonly calls: string[] } {
           : null,
       ),
     status: async () => note("status", status),
+    resourceCatalog: async () => note("resourceCatalog", { tree: [], syncedAt: null }),
+    resourcePage: async () => note("resourcePage", null),
   };
 }
 

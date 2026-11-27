@@ -3,6 +3,7 @@ pub mod content;
 pub mod corpus;
 pub mod guard;
 mod render;
+mod resources;
 pub mod source;
 pub mod title;
 pub mod worker;
@@ -80,15 +81,16 @@ impl From<url::ParseError> for Error {
 }
 /// CLI intentionally needs only DATABASE_URL: no OAuth secrets, web assets or HTTP listener.
 pub async fn cli(args: &[String]) -> u8 {
-    let once = match args {
-        [] => false,
-        [flag] if flag == "--once" => true,
+    let mode = match args {
+        [] => Mode::Daemon,
+        [flag] if flag == "--once" => Mode::ArticlesOnce,
+        [flag] if flag == "--resources-once" => Mode::ResourcesOnce,
         _ => {
-            eprintln!("usage: herkules-bbs work [--once]");
+            eprintln!("usage: herkules-bbs work [--once | --resources-once]");
             return 2;
         }
     };
-    match run(once).await {
+    match run(mode).await {
         Ok(()) => 0,
         Err(Error::LockHeld) => {
             eprintln!("bbs work: another bbs worker holds the lock");
@@ -100,7 +102,15 @@ pub async fn cli(args: &[String]) -> u8 {
         }
     }
 }
-async fn run(once: bool) -> Result<()> {
+
+#[derive(Clone, Copy)]
+enum Mode {
+    Daemon,
+    ArticlesOnce,
+    ResourcesOnce,
+}
+
+async fn run(mode: Mode) -> Result<()> {
     let url = std::env::var("DATABASE_URL").map_err(|_| {
         Error::Internal(
             "DATABASE_URL is required; Rust work needs a migrated Postgres database".into(),
@@ -154,15 +164,23 @@ async fn run(once: bool) -> Result<()> {
     let (stop, receiver) = tokio::sync::watch::channel(false);
     let result = {
         let operation = async {
-            if once {
-                let o = worker.cycle("manual", worker::ONCE).await?;
-                println!("{}", serde_json::to_string(&o)?);
-                if o.error.is_some() {
-                    return Err(Error::Internal("manual crawl failed".into()));
+            match mode {
+                Mode::ArticlesOnce => {
+                    let o = worker.cycle("manual", worker::ONCE).await?;
+                    println!("{}", serde_json::to_string(&o)?);
+                    if o.error.is_some() {
+                        return Err(Error::Internal("manual crawl failed".into()));
+                    }
+                    Ok(())
                 }
-                Ok(())
-            } else {
-                worker.work(receiver).await
+                Mode::ResourcesOnce => resources::sync(&pool, &worker.source).await,
+                Mode::Daemon => {
+                    tokio::try_join!(worker.work(receiver.clone()), async {
+                        resources::work(&pool, &worker.source, receiver).await;
+                        Ok(())
+                    })?;
+                    Ok(())
+                }
             }
         };
         // A lost lock connection ends the worker. It must never continue after Postgres releases its lock.
@@ -185,7 +203,7 @@ async fn run(once: bool) -> Result<()> {
             r=&mut monitor=>{stop.send_replace(true);r},
             _=crate::crawl::shutdown()=>{
                 stop.send_replace(true);
-                if once {Ok(())} else {
+                if !matches!(mode, Mode::Daemon) {Ok(())} else {
                     // Keep checking lock ownership while the daemon finishes its current unit.
                     tokio::select! {r=&mut operation=>r,r=&mut monitor=>r}
                 }

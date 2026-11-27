@@ -487,6 +487,31 @@ try {
     1,
     "raw menu receipt",
   );
+  // The Rust bot turns a completed wiki update into one ordinary durable delivery.
+  const wikiAt = new Date(expired.getTime() + 30_000);
+  await raw[1]!`INSERT INTO resource_updates (synced_at, changes) VALUES (${wikiAt}, ${raw[1]!.json(
+    {
+      added: 0,
+      updated: 1,
+      removed: 0,
+      tree_changed: false,
+      pages: [{ id: "1969149", title: "2027 Competition Rules" }],
+    },
+  )})`;
+  await rust("reconcile", wikiAt);
+  await rust("reconcile", wikiAt);
+  const wikiDeliveries =
+    await raw[1]!`SELECT chat_id, state, content FROM bot_deliveries WHERE kind='resources'`;
+  same(wikiDeliveries.length, 1, "one delivery despite reconciling twice");
+  same(wikiDeliveries[0]!.chat_id, chat, "wiki notice uses the configured announcement chat");
+  same(wikiDeliveries[0]!.state, "pending", "wiki notice waits in the ordinary delivery queue");
+  assert.match(wikiDeliveries[0]!.content, /2027 Competition Rules.*\/resources\/1969149/);
+  same(
+    (await raw[1]!`SELECT count(*)::int AS count FROM resource_updates`)[0]!.count,
+    0,
+    "wiki change is consumed when its delivery is queued",
+  );
+
   // Lock contention must exit before using the intentionally fake Feishu credentials.
   const lock = postgres(urls[0]!, { max: 1 });
   try {

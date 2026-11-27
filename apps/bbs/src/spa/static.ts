@@ -58,6 +58,18 @@ export const SHORT_LIVED = "public, max-age=3600";
 /** Prefixes the SPA fallback must refuse: a miss under any of these is a 404, never the document. */
 const NEVER_A_DOCUMENT = ["/api/", "/mcp/", "/assets/", "/fonts/"];
 
+function resourceHead(title: string, path: string): HeadMeta {
+  return {
+    title,
+    description: "RoboMaster 规则与资料",
+    path,
+    type: "website",
+    image: null,
+    publishedAt: null,
+    author: null,
+  };
+}
+
 /** Reads and parses `${webDir}/index.html` once. Throws at boot on a missing file or marker. */
 export async function createSpaHandler(deps: StaticDeps): Promise<SpaHandler> {
   const { webDir } = deps;
@@ -71,6 +83,9 @@ export async function createSpaHandler(deps: StaticDeps): Promise<SpaHandler> {
     });
 
   const metaFor = async (pathname: string): Promise<HeadMeta | null | "plain"> => {
+    if (pathname === "/resources" || pathname === "/resources/") {
+      return resourceHead("规则与资料", "/resources");
+    }
     const route = headRouteOf(pathname);
     if (route === null) return "plain";
     // `undefined`: a /kb/:name that does not percent-decode. No document can match
@@ -79,6 +94,10 @@ export async function createSpaHandler(deps: StaticDeps): Promise<SpaHandler> {
     if (route.kind === "article") {
       const id = articleId(route.id);
       return id ? deps.library.head(id) : null;
+    }
+    if (route.kind === "resource") {
+      const page = await deps.library.resourcePage(route.id);
+      return page ? resourceHead(page.title, `/resources/${page.id}`) : null;
     }
     return deps.library.entityHead(entityKey(route.id));
   };

@@ -207,6 +207,9 @@ hashes, search documents and unchanged-content timestamps. A failed backfill pag
 retains its cursor and no longer discards successful page-one discovery. Listings
 can fill a missing introduction without changing position or pinning.
 
+The daemon also runs the [daily rules and resources mirror](../README.md#rules-and-resources-mirror).
+`work --resources-once` runs just that mirror using the same database and worker lock.
+
 All requests use the existing fixed source policy: two-second spacing plus up to
 one-second jitter, 20/minute, 2,000/UTC day, a 200-request background reserve, and
 persisted escalating cooldowns. The worker reads and writes the existing
@@ -289,6 +292,5 @@ BBS_RUST_TEST_POSTGRES=postgres://test_user:password@localhost/postgres \
 vp run test:rust:bot
 ```
 
-See [bot migration gates](../BOT_MIGRATION.md) for the compatibility checks and
-remaining SDK aggregate-fragment resource limit. Production still uses Node until
-its infrastructure image selection is changed.
+The Rust bot sends one card for each completed wiki sync with changes. It queues those cards
+through the same outbox as article announcements. [Bot migration gates](../BOT_MIGRATION.md)
