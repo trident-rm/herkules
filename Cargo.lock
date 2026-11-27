@@ -1198,6 +1198,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "herkules-ai"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "futures-util",
+ "herkules-auth",
+ "hex",
+ "rand 0.10.3",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "tokio",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "zstd",
+]
+
+[[package]]
 name = "herkules-auth"
 version = "0.1.0"
 dependencies = [
@@ -3068,6 +3094,7 @@ dependencies = [
  "sqlx-postgres",
  "sqlx-sqlite",
  "syn 2.0.119",
+ "thiserror",
  "tokio",
  "url",
 ]
@@ -4269,3 +4296,31 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zstd"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b04655dc7bf4abd8ebe23dac6bef20fceea52a29ad19e37a4101b3951d7e8b45"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df2575690b2a3eccad509fe7898cdde32a5afca06a06449ff4dcfb318c7b7281"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.2.0+zstd.1.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3f4089cda6dda4dc43c43dd9f8964140064fd2f752f3da46c3a483c3c175160"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
