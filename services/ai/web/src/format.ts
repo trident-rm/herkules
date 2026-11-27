@@ -1,5 +1,4 @@
-/** Formatting and aggregation for the portal's tables. Pure. */
-import type { UsageDay } from "./api.ts";
+/** Formatting for the portal's numbers and times. Pure. */
 
 export function count(n: number | null | undefined): string {
   if (n === null || n === undefined) return "–";
@@ -28,37 +27,40 @@ export function when(iso: string | null): string {
   });
 }
 
-export interface Totals {
-  requests: number;
-  promptTokens: number;
-  cachedTokens: number;
-  outputTokens: number;
+export function percent(part: number, whole: number): string {
+  if (whole === 0) return "–";
+  const p = (part / whole) * 100;
+  return p > 0 && p < 0.1 ? "<0.1%" : `${p.toFixed(p >= 10 ? 0 : 1)}%`;
 }
 
-const empty = (): Totals => ({ requests: 0, promptTokens: 0, cachedTokens: 0, outputTokens: 0 });
-
-function add(into: Totals, row: Totals): Totals {
-  into.requests += row.requests;
-  into.promptTokens += row.promptTokens;
-  into.cachedTokens += row.cachedTokens;
-  into.outputTokens += row.outputTokens;
-  return into;
+/** A log timestamp: time of day for today, date and time otherwise. */
+export function stamp(iso: string, now = new Date()): string {
+  const at = new Date(iso);
+  const time = at.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  if (at.toDateString() === now.toDateString()) return time;
+  return `${at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
 }
 
-/** Rows summed per key, in descending key order (newest day first). */
-export function byDay(rows: UsageDay[]): [string, Totals][] {
-  const days = new Map<string, Totals>();
-  for (const row of rows) days.set(row.day, add(days.get(row.day) ?? empty(), row));
-  return [...days].sort(([a], [b]) => b.localeCompare(a));
+/** An axis tick for a chart bucket: clock time for short buckets, the date for long ones. */
+export function tick(iso: string, bucketSeconds: number): string {
+  const at = new Date(iso);
+  if (bucketSeconds >= 43_200)
+    return at.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const time = at.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  if (bucketSeconds < 3600) return time;
+  return `${at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
 }
 
-/** Rows summed per user, largest output first. */
-export function byUser(rows: UsageDay[]): [string, Totals][] {
-  const users = new Map<string, Totals>();
-  for (const row of rows) users.set(row.sub, add(users.get(row.sub) ?? empty(), row));
-  return [...users].sort(([, a], [, b]) => b.outputTokens - a.outputTokens);
-}
-
-export function total(rows: UsageDay[]): Totals {
-  return rows.reduce(add, empty());
+/** The route without its version prefix: `/v1/chat/completions` → `chat/completions`. */
+export function shortRoute(route: string): string {
+  return route.replace(/^\/v1\//, "").replace(/^\//, "");
 }

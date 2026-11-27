@@ -108,6 +108,26 @@ A request is logged at `metadata` or `full`. `full` also stores the request and 
 
 The level is the owner's override if an admin set one, else the model's default if set, else `metadata`. The portal shows each member their level. Members can read their own stored bodies, and admins can read anyone's.
 
+### Reading the log
+
+Members read only their own rows. Admins read their own by default, everyone's with `all=true`, or one user's with `sub=<sub>`.
+
+- `GET /api/requests`: newest first, at most `limit` (50, up to 200). Paging uses `before=<id>`, and a live tail uses `after=<id>`. Filters, all combined: `q` (a case-insensitive substring of model, backend, route, error, effort or key name, or the row id), `model`, `backend`, `route`, `key` (a key id), `status` (`ok`, `error` or `cancelled`), and `from` and `to` (RFC 3339, from inclusive, to exclusive).
+- `GET /api/requests/{id}`: one row. `GET /api/requests/{id}/body`: its stored bodies.
+- `GET /api/stats?range=1h|24h|7d|30d`: totals, a time series and breakdowns by model, backend, key and, for an admin reading everyone's rows, the 20 busiest users, plus the 10 newest errors. Buckets are 1 minute, 30 minutes, 3 hours or 12 hours, aligned to the Unix epoch, and empty buckets are included.
+- `GET /api/keys`: each key with its requests and tokens over the last 30 days.
+
+A request counts as cancelled when the client left, as an error when it has status 400 or above or an error message and was not cancelled, and as OK otherwise. TTFT and tok/s percentiles cover successful generations only: status below 400, no error, and at least one output token.
+
+## Portal
+
+The SPA in `web/` is a React app on TanStack Router and Query. Pages: Overview (stats charts and live backend health), Logs, Models, Keys, Setup, and for admins Backends and Logging. The time range, log filters, the admin scope (`scope=all` or `user=<sub>`) and the open log entry (`id`) live in the URL, so every view can be linked.
+
+- The log table is virtualized and loads 100 rows per page as it scrolls. Live mode polls `after=<newest id>` every 3 seconds and prepends new rows.
+- The detail panel shows stored bodies as a JSON tree, as raw text, or, for a response, as the assistant's assembled text and reasoning (OpenAI chat, Anthropic messages and the Responses API, streamed or not).
+- The portal uses the shared `@herkules/ui` primitives but sets its own token values in `web/src/console.css`: neutral greys, one blue accent, and a 14px root size, so the rem-sized primitives come out denser. herkules.dev and the BBS do not use it.
+- Each page is its own chunk. Recharts loads only with the overview.
+
 ## Configuration
 
 | Variable                            | Default          | Meaning                                                                                      |
@@ -136,8 +156,9 @@ The level is the owner's override if an admin set one, else the model's default 
 ```sh
 cargo test -p herkules-ai --locked
 cargo clippy -p herkules-ai --all-targets --locked -- -D warnings
+AI_TEST_DATABASE_URL=postgres://… cargo test -p herkules-ai -- --ignored   # the portal queries, against a scratch database it migrates and writes to
 vp run @herkules/ai#build   # the portal, into dist/client
-vp run @herkules/ai#test    # setup snippets and formatting
+vp run @herkules/ai#test    # setup snippets, formatting and body parsing
 ```
 
 To run it locally, start Postgres and the auth service, then:

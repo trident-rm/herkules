@@ -18,15 +18,10 @@ export interface Key {
   prefix: string;
   createdAt: string;
   lastUsedAt: string | null;
-}
-
-export interface UsageDay {
-  day: string;
-  sub: string;
-  requests: number;
-  promptTokens: number;
-  cachedTokens: number;
-  outputTokens: number;
+  requests30d: number;
+  promptTokens30d: number;
+  cachedTokens30d: number;
+  outputTokens30d: number;
 }
 
 export interface RequestRow {
@@ -101,6 +96,54 @@ export interface Person {
   avatarUrl: string | null;
 }
 
+/** Whose data a page shows. Members only ever get their own; the server enforces it. */
+export interface Scope {
+  all?: boolean;
+  sub?: string;
+}
+
+export type StatusFilter = "ok" | "error" | "cancelled";
+
+export interface LogFilter extends Scope {
+  q?: string;
+  model?: string;
+  backend?: string;
+  route?: string;
+  key?: number;
+  status?: StatusFilter;
+  from?: string;
+  to?: string;
+}
+
+export type Range = "1h" | "24h" | "7d" | "30d";
+
+export interface Totals {
+  requests: number;
+  errors: number;
+  cancelled: number;
+  promptTokens: number;
+  cachedTokens: number;
+  outputTokens: number;
+  ttftP50: number | null;
+  ttftP95: number | null;
+  tpsP50: number | null;
+  tpsP95: number | null;
+}
+
+export interface Stats {
+  range: Range;
+  bucketSeconds: number;
+  from: string;
+  to: string;
+  totals: Totals;
+  series: (Totals & { t: string })[];
+  models: (Totals & { model: string | null })[];
+  backends: (Totals & { backend: string | null })[];
+  keys: (Totals & { keyId: number; keyName: string | null })[];
+  users: (Totals & { sub: string; displayName: string | null; avatarUrl: string | null })[];
+  recentErrors: RequestRow[];
+}
+
 export class HttpError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -121,6 +164,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
 
+/** Query parameters from an object, skipping empty values. */
+export function query(params: Record<string, string | number | boolean | undefined>): string {
+  const out = new URLSearchParams();
+  for (const [name, value] of Object.entries(params))
+    if (value !== undefined && value !== "" && value !== false) out.set(name, String(value));
+  return out.toString();
+}
+
 const send = (method: string, body?: unknown): RequestInit => ({
   method,
   body: body === undefined ? undefined : JSON.stringify(body),
@@ -131,18 +182,14 @@ export const api = {
   keys: () => call<{ keys: Key[] }>("/keys"),
   createKey: (name: string) => call<{ key: Key; secret: string }>("/keys", send("POST", { name })),
   revokeKey: (id: number) => call<void>(`/keys/${id}`, send("DELETE")),
-  usage: (days = 30) => call<{ days: UsageDay[] }>(`/usage?days=${days}`),
-  requests: (q: { before?: number; sub?: string; all?: boolean }) => {
-    const params = new URLSearchParams();
-    if (q.before) params.set("before", String(q.before));
-    if (q.sub) params.set("sub", q.sub);
-    if (q.all) params.set("all", "true");
-    return call<{ requests: RequestRow[] }>(`/requests?${params}`);
-  },
+  requests: (filter: LogFilter, page: { before?: number; after?: number; limit?: number }) =>
+    call<{ requests: RequestRow[]; users: Record<string, Person> }>(
+      `/requests?${query({ ...filter, ...page })}`,
+    ),
+  request: (id: number) => call<{ request: RequestRow }>(`/requests/${id}`),
   bodies: (id: number) => call<Bodies>(`/requests/${id}/body`),
+  stats: (range: Range, scope: Scope) => call<Stats>(`/stats?${query({ range, ...scope })}`),
   performance: () => call<Performance>("/performance"),
-  adminUsage: (days = 30) =>
-    call<{ days: UsageDay[]; users: Record<string, Person> }>(`/admin/usage?days=${days}`),
   setBackendState: (name: string, state: BackendState) =>
     call<void>(`/admin/backends/${encodeURIComponent(name)}/state`, send("PUT", { state })),
   addBackend: (body: { name: string; models: string[]; port: number }) =>
