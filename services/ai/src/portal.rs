@@ -1,4 +1,4 @@
-//! The portal host: sign-in, keys, usage, the request log, performance and administration.
+//! The portal host: sign-in, keys, stats, the request log, performance and administration.
 //!
 //! Browser sessions are the shared first-party OAuth client from `herkules-auth`; a bearer
 //! token for the `api/ai` audience works too. Admin routes require the token's `admin` role.
@@ -16,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
+use chrono::{DateTime, TimeDelta, Utc};
 use herkules_auth::{Failure, Principal, with_cookies};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -33,11 +34,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/me", get(me))
         .route("/keys", get(list_keys).post(create_key))
         .route("/keys/{id}", delete(revoke_key))
-        .route("/usage", get(usage))
         .route("/requests", get(requests))
+        .route("/requests/{id}", get(request))
         .route("/requests/{id}/body", get(body))
+        .route("/stats", get(stats))
         .route("/performance", get(performance))
-        .route("/admin/usage", get(admin_usage))
         .route("/admin/backends", post(add_backend))
         .route("/admin/backends/{name}", delete(remove_backend))
         .route("/admin/backends/{name}/state", put(set_state))
@@ -194,23 +195,6 @@ async fn revoke_key(
     }
 }
 
-#[derive(Deserialize)]
-struct Days {
-    days: Option<i32>,
-}
-
-async fn usage(
-    State(app): AppState,
-    Extension(p): Extension<Principal>,
-    Query(q): Query<Days>,
-) -> Response {
-    let days = q.days.unwrap_or(30).clamp(1, 366);
-    match db::usage(&app.db, Some(&p.subject), days).await {
-        Ok(rows) => Json(json!({"days": rows})).into_response(),
-        Err(e) => internal(e),
-    }
-}
-
 /// Display names for `subs` from the auth service, with the admin's own token.
 async fn names(app: &App, p: &Principal, subs: Vec<String>) -> HashMap<String, Value> {
     let mut names = HashMap::new();
@@ -242,30 +226,44 @@ async fn names(app: &App, p: &Principal, subs: Vec<String>) -> HashMap<String, V
     names
 }
 
-async fn admin_usage(
-    State(app): AppState,
-    Extension(p): Extension<Principal>,
-    Query(q): Query<Days>,
-) -> Response {
-    let days = q.days.unwrap_or(30).clamp(1, 366);
-    let rows = match db::usage(&app.db, None, days).await {
-        Ok(rows) => rows,
-        Err(e) => return internal(e),
-    };
-    let mut subs: Vec<String> = rows.iter().map(|r| r.sub.clone()).collect();
-    subs.sort_unstable();
-    subs.dedup();
-    let users = names(&app, &p, subs).await;
-    Json(json!({"days": rows, "users": users})).into_response()
+/// Whose rows a read covers; `None` is everyone. Members always get their own. Admins get
+/// their own unless they ask for everyone's with `all` or one user's with `sub`.
+fn scope(p: &Principal, all: Option<bool>, sub: Option<String>) -> Option<String> {
+    if !is_admin(p) {
+        Some(p.subject.clone())
+    } else if all == Some(true) {
+        None
+    } else {
+        Some(sub.unwrap_or_else(|| p.subject.clone()))
+    }
+}
+
+/// A query parameter, with an empty value treated as absent.
+fn given(raw: Option<String>) -> Option<String> {
+    raw.filter(|s| !s.is_empty())
+}
+
+fn instant(raw: Option<&str>) -> Result<Option<DateTime<Utc>>, chrono::ParseError> {
+    raw.map(|s| DateTime::parse_from_rfc3339(s).map(|t| t.to_utc()))
+        .transpose()
 }
 
 #[derive(Deserialize)]
 struct Page {
     before: Option<i64>,
+    after: Option<i64>,
     limit: Option<i64>,
     /// Admins: one user's requests, or everyone's with `all`.
     sub: Option<String>,
     all: Option<bool>,
+    q: Option<String>,
+    model: Option<String>,
+    backend: Option<String>,
+    route: Option<String>,
+    key: Option<i64>,
+    status: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
 }
 
 async fn requests(
@@ -273,18 +271,142 @@ async fn requests(
     Extension(p): Extension<Principal>,
     Query(q): Query<Page>,
 ) -> Response {
-    let sub = if is_admin(&p) && q.all == Some(true) {
-        None
-    } else if is_admin(&p) && q.sub.is_some() {
-        q.sub.clone()
-    } else {
-        Some(p.subject.clone())
+    let outcome = match given(q.status).map(|s| db::Outcome::parse(&s)) {
+        None => None,
+        Some(Some(outcome)) => Some(outcome),
+        Some(None) => {
+            return problem(StatusCode::BAD_REQUEST, "status is ok, error or cancelled");
+        }
+    };
+    let (Ok(from), Ok(to)) = (
+        instant(given(q.from).as_deref()),
+        instant(given(q.to).as_deref()),
+    ) else {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            "from and to are RFC 3339 timestamps",
+        );
+    };
+    let sub = scope(&p, q.all, q.sub);
+    let others = sub.as_deref() != Some(p.subject.as_str());
+    let filter = db::RequestFilter {
+        sub,
+        before: q.before,
+        after: q.after,
+        q: given(q.q.map(|s| s.trim().to_owned())),
+        model: given(q.model),
+        backend: given(q.backend),
+        route: given(q.route),
+        key: q.key,
+        outcome,
+        from,
+        to,
     };
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    match db::requests(&app.db, sub.as_deref(), q.before, limit).await {
-        Ok(rows) => Json(json!({"requests": rows})).into_response(),
+    let rows = match db::requests(&app.db, &filter, limit).await {
+        Ok(rows) => rows,
+        Err(e) => return internal(e),
+    };
+    let users = if others && !rows.is_empty() {
+        let mut subs: Vec<String> = rows.iter().map(|r| r.sub.clone()).collect();
+        subs.sort_unstable();
+        subs.dedup();
+        names(&app, &p, subs).await
+    } else {
+        HashMap::new()
+    };
+    Json(json!({"requests": rows, "users": users})).into_response()
+}
+
+async fn request(
+    State(app): AppState,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> Response {
+    let sub = (!is_admin(&p)).then_some(p.subject.as_str());
+    match db::request(&app.db, id, sub).await {
+        Ok(Some(row)) => Json(json!({"request": row})).into_response(),
+        Ok(None) => problem(StatusCode::NOT_FOUND, "no such request"),
         Err(e) => internal(e),
     }
+}
+
+/// A stats range's length and bucket size, in seconds.
+fn stats_range(name: &str) -> Option<(i64, i64)> {
+    match name {
+        "1h" => Some((3_600, 60)),
+        "24h" => Some((86_400, 1_800)),
+        "7d" => Some((7 * 86_400, 10_800)),
+        "30d" => Some((30 * 86_400, 43_200)),
+        _ => None,
+    }
+}
+
+#[derive(Deserialize)]
+struct StatsQuery {
+    range: Option<String>,
+    sub: Option<String>,
+    all: Option<bool>,
+}
+
+async fn stats(
+    State(app): AppState,
+    Extension(p): Extension<Principal>,
+    Query(q): Query<StatsQuery>,
+) -> Response {
+    let range = given(q.range).unwrap_or_else(|| "24h".to_owned());
+    let Some((length, bucket)) = stats_range(&range) else {
+        return problem(StatusCode::BAD_REQUEST, "range is 1h, 24h, 7d or 30d");
+    };
+    let sub = scope(&p, q.all, q.sub);
+    let to = Utc::now();
+    let from = to - TimeDelta::seconds(length);
+    let overview = match db::overview(&app.db, sub.as_deref(), from, to, bucket).await {
+        Ok(overview) => overview,
+        Err(e) => return internal(e),
+    };
+    let errors = db::RequestFilter {
+        sub,
+        outcome: Some(db::Outcome::Error),
+        from: Some(from),
+        to: Some(to),
+        ..db::RequestFilter::default()
+    };
+    let recent_errors = match db::requests(&app.db, &errors, 10).await {
+        Ok(rows) => rows,
+        Err(e) => return internal(e),
+    };
+    let names = if overview.users.is_empty() {
+        HashMap::new()
+    } else {
+        let subs = overview.users.iter().map(|u| u.sub.clone()).collect();
+        names(&app, &p, subs).await
+    };
+    let users: Vec<Value> = overview
+        .users
+        .iter()
+        .map(|u| {
+            let name = names.get(&u.sub);
+            let mut view = json!(u);
+            view["displayName"] = name.map_or(Value::Null, |n| n["displayName"].clone());
+            view["avatarUrl"] = name.map_or(Value::Null, |n| n["avatarUrl"].clone());
+            view
+        })
+        .collect();
+    Json(json!({
+        "range": range,
+        "bucketSeconds": bucket,
+        "from": from,
+        "to": to,
+        "totals": overview.totals,
+        "series": overview.series,
+        "models": overview.models,
+        "backends": overview.backends,
+        "keys": overview.keys,
+        "users": users,
+        "recentErrors": recent_errors,
+    }))
+    .into_response()
 }
 
 async fn body(
