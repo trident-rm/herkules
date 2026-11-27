@@ -20,7 +20,7 @@ export function Prose({
   onImage,
 }: {
   html: string;
-  onNavigate: (path: string) => void;
+  onNavigate?: (path: string) => void;
   onImage: (src: string, alt: string) => void;
 }) {
   const onClick = useCallback(
@@ -41,7 +41,7 @@ export function Prose({
       }
 
       const anchor = target.closest("a");
-      if (!anchor?.href) return;
+      if (!anchor?.href || !onNavigate) return;
       const url = new URL(anchor.href, window.location.href);
       if (url.origin !== window.location.origin) return;
       if (!url.pathname.startsWith("/articles/")) return;

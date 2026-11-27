@@ -140,6 +140,24 @@ All ten tools are read-only and served by the same library layer as the REST API
 - One worker process runs two supervised loops and holds a Postgres advisory lock. A second worker exits before issuing a source request.
 - The crawler only reads the public RoboMaster forum. It does not log in, bypass access controls, crawl other hosts, generate AI content, or delete articles missing from listings.
 
+## Rules and resources mirror
+
+`/resources` browses Rulebooks, Event Products and Technical Assessment. BBS serves sanitized
+page bodies from Postgres and links to RoboMaster's original files and pages. It stores the wiki
+tree in `resource_catalog` and page bodies in `resource_pages`.
+[RoboMaster Rules/Resources Hub](https://bbs.robomaster.com/wiki/20204847)
+
+The Rust `work` daemon checks the wiki on startup if a sync is due and again 24 hours after each
+successful sync. It reads the navigation tree and requests `updateAt` for its posts in batches.
+It fetches bodies only for new posts and changed timestamps. Body requests run sequentially,
+at least five seconds apart, under the same source guard and background budget as the forum
+crawler. A failed check keeps the published copy and retries after an hour or the source cooldown,
+whichever is later. It reuses any staged bodies whose upstream timestamps still match.
+
+Run the matching `bbs migrate` preparation before updating the web and worker images. To run a
+manual check, stop the daemon first and run `herkules-bbs work --resources-once` with the same
+`DATABASE_URL`. The worker lock prevents concurrent runs.
+
 ## Operational stop condition
 
 Do not work around source blocking. If the deployed Hong Kong host cannot fetch both required public forum endpoints with the configured user agent, or the fixed policy still causes sustained 403 or 429 responses, stop the worker and reassess the source and deployment location. The relevant boundaries are in `src/source/robomaster.ts`, `src/source/http.ts`, and `src/guard/policy.ts`.

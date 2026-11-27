@@ -1,9 +1,8 @@
 /**
  * The typed adapter over `hc<AppType>`. It owns the two policies rm-wenku spread
  * across eight screens: the `{ error, error_description }` envelope becomes an
- * `ApiError`, and a 404 becomes `null` on EXACTLY the three routes where a
- * missing id is data (article, ai, entity) — everywhere else a 404 is a bug and
- * throws. `fetch` is injectable so the contract test drives the real Hono app.
+ * `ApiError`, and a 404 becomes `null` on routes where a missing id is data.
+ * `fetch` is injectable so the contract test drives the real Hono app.
  */
 import type { InferRequestType } from "hono/client";
 import { hc } from "hono/client";
@@ -21,6 +20,7 @@ import type {
   ViewerDTO,
 } from "../../../src/api/dto.ts";
 import type { AppType } from "../../../src/api/routes.ts"; // type-only: the whole contract
+import type { ResourceCatalog, ResourcePage } from "../../../src/library/resources.ts";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -43,8 +43,7 @@ export type KbBrowseQuery = InferRequestType<Client["api"]["kb"]["browse"]["$get
 
 /**
  * One method per route the SPA uses (`/api/kb/entities` has no SPA consumer; `/api/me` is not
- * called — `viewer` answers the same question without a 401). `null` is returned ONLY where a
- * missing id is data: article, ai, entity.
+ * called — `viewer` answers the same question without a 401).
  */
 export interface BbsApi {
   articles(query: FeedQuery): Promise<ArticlePageDTO>;
@@ -55,6 +54,8 @@ export interface BbsApi {
   kbBrowse(query: KbBrowseQuery): Promise<KbBrowseDTO>;
   entity(name: string): Promise<EntityDetailDTO | null>;
   status(): Promise<LibraryStatusDTO>;
+  resourceCatalog(): Promise<ResourceCatalog>;
+  resourcePage(id: string): Promise<ResourcePage | null>;
   /** `{ viewer: null }` for nobody — never a 401. */
   viewer(): Promise<{ viewer: ViewerDTO | null }>;
 }
@@ -79,7 +80,7 @@ async function ok<T>(res: Response): Promise<T> {
   return res.ok ? ((await res.json()) as T) : fail(res);
 }
 
-/** The three routes where a missing row is an answer, not a failure. */
+/** Use for routes whose missing rows are valid results. */
 async function okOrNull<T>(res: Response): Promise<T | null> {
   if (res.ok) return (await res.json()) as T;
   return res.status === 404 ? null : fail(res);
@@ -102,6 +103,9 @@ export function createApi(options: ApiOptions): BbsApi {
     entity: async (name) =>
       okOrNull<EntityDetailDTO>(await client.api.kb.entities[":name"].$get({ param: { name } })),
     status: async () => ok<LibraryStatusDTO>(await client.api.status.$get()),
+    resourceCatalog: async () => ok<ResourceCatalog>(await client.api.resources.$get()),
+    resourcePage: async (id) =>
+      okOrNull<ResourcePage>(await client.api.resources[":id"].$get({ param: { id } })),
     viewer: async () => ok<{ viewer: ViewerDTO | null }>(await client.api.viewer.$get()),
   };
 }

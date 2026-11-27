@@ -205,9 +205,21 @@ impl Guard {
             .refusal(self.policy, priority, Utc::now().timestamp_millis())
     }
     pub async fn acquire(&self) -> Result<()> {
+        self.acquire_for(Priority::Interactive).await
+    }
+
+    pub(super) async fn acquire_for(&self, priority: Priority) -> Result<()> {
         let mut state = self.state.lock().await;
         loop {
             let now = Utc::now().timestamp_millis();
+            if priority == Priority::Background
+                && let Some(refusal) = state.refusal(self.policy, priority, now)
+            {
+                return Err(Error::Throttled {
+                    until: refusal.until.unwrap_or(now + 60_000),
+                    reason: refusal.reason,
+                });
+            }
             let jitter = (rand::random::<f64>() * self.policy.jitter as f64) as i64;
             match state.decide(self.policy, now, jitter) {
                 None => {

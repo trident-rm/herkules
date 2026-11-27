@@ -4,8 +4,13 @@ use super::{
     guard::{Guard, Priority},
 };
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Timelike, Utc};
+use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::HashSet;
+use url::Url;
+
+use crate::resources::{Attachment, Page};
 pub const ORIGIN: &str = "https://bbs.robomaster.com";
 pub const USER_AGENT: &str = "rm-wenku/0.2 (+public article monitoring; rate limited; https://github.com/trident-rm/rm-wenku)";
 pub const MAX_BODY: usize = 5 * 1024 * 1024;
@@ -105,7 +110,7 @@ where
 fn clean(s: Option<String>) -> Option<String> {
     s.map(|s| content::clean(&s)).filter(|s| !s.is_empty())
 }
-fn invalid(message: impl Into<String>) -> Error {
+pub(super) fn invalid(message: impl Into<String>) -> Error {
     Error::Source {
         kind: "invalid",
         message: message.into(),
@@ -209,36 +214,11 @@ pub fn parse_listing(json: Value, page: i32, size: i32) -> Result<Listing> {
     Ok(Listing { items, is_last })
 }
 pub fn parse_detail(json: Value) -> Result<Detail> {
-    let e: Envelope<Post> = serde_json::from_value(json)
-        .map_err(|e| invalid(format!("unexpected response shape: {e}")))?;
-    let post = e.data.ok_or_else(|| Error::Source {
-        kind: "notFound",
-        message: "not found".into(),
-        retry: None,
-    })?;
-    if e.success == Some(false) {
-        return Err(invalid(
-            e.message.unwrap_or_else(|| "forum reported failure".into()),
-        ));
-    }
+    let mut post = decode_post(json)?;
     let item = listed(&post, 0)?;
-    let md = post.markdown_content.filter(|s| !s.trim().is_empty());
-    let html = post.html_content.filter(|s| !s.trim().is_empty());
-    let prefers_md = post
-        .content_type
-        .as_deref()
-        .unwrap_or("")
-        .eq_ignore_ascii_case("MARKDOWN");
-    let (format, raw) = if let Some(md) = md.filter(|_| prefers_md || html.is_none()) {
-        ("markdown", md)
-    } else if let Some(h) = html {
-        ("html", h)
-    } else {
-        return Err(invalid(format!(
-            "post {} has no content",
-            item.source_article_id
-        )));
-    };
+    let (format, raw) = post
+        .take_content()
+        .ok_or_else(|| invalid(format!("post {} has no content", item.source_article_id)))?;
     let mut extracted = content::extract(format, &raw, &item.url);
     for f in post
         .attachments
@@ -265,6 +245,125 @@ pub fn parse_detail(json: Value) -> Result<Detail> {
         parser_version: "rm-api-v5".into(),
     })
 }
+
+fn decode_post(json: Value) -> Result<Post> {
+    let e: Envelope<Post> = serde_json::from_value(json)
+        .map_err(|e| invalid(format!("unexpected response shape: {e}")))?;
+    let post = e.data.ok_or_else(|| Error::Source {
+        kind: "notFound",
+        message: "not found".into(),
+        retry: None,
+    })?;
+    if e.success == Some(false) {
+        return Err(invalid(
+            e.message.unwrap_or_else(|| "forum reported failure".into()),
+        ));
+    }
+    Ok(post)
+}
+
+impl Post {
+    fn take_content(&mut self) -> Option<(&'static str, String)> {
+        let md = self
+            .markdown_content
+            .take()
+            .filter(|s| !s.trim().is_empty());
+        let html = self.html_content.take().filter(|s| !s.trim().is_empty());
+        let prefers_md = self
+            .content_type
+            .as_deref()
+            .is_some_and(|kind| kind.eq_ignore_ascii_case("MARKDOWN"));
+        if let Some(md) = md.filter(|_| prefers_md || html.is_none()) {
+            Some(("markdown", md))
+        } else {
+            html.map(|html| ("html", html))
+        }
+    }
+}
+
+pub(super) fn wiki_data<T: serde::de::DeserializeOwned>(json: Value) -> Result<T> {
+    let e: Envelope<T> = serde_json::from_value(json)
+        .map_err(|e| invalid(format!("unexpected wiki response shape: {e}")))?;
+    if e.success != Some(true) {
+        return Err(invalid(
+            e.message.unwrap_or_else(|| "forum reported failure".into()),
+        ));
+    }
+    e.data.ok_or_else(|| invalid("missing wiki data"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WikiPost {
+    #[serde(flatten)]
+    post: Post,
+    update_at: Time,
+    state: String,
+    category: String,
+    draft: Option<bool>,
+}
+
+fn wiki_page(json: Value, id: &str) -> Result<Page> {
+    let mut wiki: WikiPost = wiki_data(json)?;
+    let post = &mut wiki.post;
+    let item = listed(post, 0)?;
+    if item.source_article_id != id
+        || wiki.state != "PASS"
+        || wiki.category != "WIKI"
+        || wiki.draft == Some(true)
+    {
+        return Err(invalid(format!("wiki post {id} is not published")));
+    }
+    let updated_at = parse_time(&wiki.update_at)
+        .ok_or_else(|| invalid(format!("wiki post {id} has an invalid update timestamp")))?;
+    let base = Url::parse(&format!("{ORIGIN}/wiki/20204847/{id}"))?;
+    let html = post
+        .take_content()
+        .map(|(format, raw)| content::render_html(format, &raw, base.as_str(), &item.title, &[]))
+        .unwrap_or_default();
+    let doc = Html::parse_fragment(&html);
+    let selector = Selector::parse("a[href], img[src]").expect("valid selector for inline files");
+    let mut seen: HashSet<_> = doc
+        .select(&selector)
+        .filter_map(|node| node.attr("href").or_else(|| node.attr("src")))
+        .filter_map(|url| base.join(url).ok())
+        .collect();
+    let attachments = post
+        .attachments
+        .take()
+        .into_iter()
+        .flatten()
+        .chain(post.file_items.take().into_iter().flatten())
+        .filter_map(|f| {
+            let src = f.src?;
+            let src = src.trim();
+            if src.is_empty() {
+                return None;
+            }
+            let url = base.join(src).ok()?;
+            if !matches!(url.scheme(), "http" | "https")
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || !seen.insert(url.clone())
+            {
+                return None;
+            }
+            let name = clean(f.name).unwrap_or_else(|| url.to_string());
+            Some(Attachment {
+                url: url.into(),
+                name,
+            })
+        })
+        .collect();
+    Ok(Page {
+        id: item.source_article_id,
+        title: item.title,
+        html,
+        attachments,
+        updated_at,
+    })
+}
+
 #[derive(Clone)]
 pub struct Source {
     client: reqwest::Client,
@@ -281,12 +380,12 @@ impl Source {
             .build()?;
         Ok(Self { client, guard })
     }
-    async fn post(&self, path: &str, body: Value) -> Result<Value> {
+    pub(super) async fn post(&self, path: &str, body: Value, priority: Priority) -> Result<Value> {
         let url = url::Url::parse(ORIGIN)?.join(path)?;
         if url.origin().ascii_serialization() != ORIGIN || url.scheme() != "https" {
             return Err(invalid("refusing URL outside forum origin"));
         }
-        self.guard.acquire().await?;
+        self.guard.acquire_for(priority).await?;
         let result = self.request(url, body).await;
         let failure = match &result {
             Err(Error::Source { kind, retry, .. })
@@ -379,7 +478,19 @@ impl Source {
         if page < 1 || size < 1 {
             return Err(invalid("bad listing page"));
         }
-        parse_listing(self.post("/developers-server/rest/posts/list",json!({"pageSize":size,"pageNo":page,"filter":{"category":"ARTICLE","sortByCreateAt":true,"tagIds":[]}})).await?,page,size)
+        let body = json!({
+            "pageSize": size,
+            "pageNo": page,
+            "filter": {"category": "ARTICLE", "sortByCreateAt": true, "tagIds": []}
+        });
+        let json = self
+            .post(
+                "/developers-server/rest/posts/list",
+                body,
+                Priority::Interactive,
+            )
+            .await?;
+        parse_listing(json, page, size)
     }
     pub async fn detail(&self, id: &str, _priority: Priority) -> Result<Detail> {
         if id.is_empty()
@@ -393,14 +504,43 @@ impl Source {
             self.post(
                 &format!("/developers-server/rest/posts/info/{id}"),
                 json!({}),
+                Priority::Interactive,
             )
             .await?,
+        )
+    }
+
+    pub(super) async fn wiki_page(&self, id: &str) -> Result<Page> {
+        wiki_page(
+            self.post(
+                &format!("/developers-server/rest/posts/info/{id}"),
+                json!({}),
+                Priority::Background,
+            )
+            .await?,
+            id,
         )
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wiki_page_keeps_inline_downloads_and_lists_extra_attachments_once() {
+        let post = json!({"success": true, "data": {
+            "id": 29, "title": "Rulebooks", "category": "WIKI", "state": "PASS", "updateAt": "2026-10-28T06:15:00.000+00:00",
+            "htmlContent": "<table><tr><td><a href=\"https://files.example/rules.pdf\">Rules</a></td></tr></table><script>bad()</script>",
+            "attachments": [{"src": "https://files.example/rules.pdf"}, {"src": "https://files.example/specs.zip", "name": "Specs"}, {"src": "javascript:bad()"}],
+            "fileItems": [{"src": "https://files.example/specs.zip", "name": "Specs"}]
+        }});
+        let page = wiki_page(post, "29").expect("published wiki page");
+        assert!(page.html.contains("https://files.example/rules.pdf"));
+        assert!(!page.html.contains("bad()"));
+        assert_eq!(page.attachments.len(), 1);
+        assert_eq!(page.attachments[0].url, "https://files.example/specs.zip");
+        assert_eq!(page.attachments[0].name, "Specs");
+    }
     #[test]
     fn invalid_envelope_is_not_a_missing_post() {
         assert!(matches!(

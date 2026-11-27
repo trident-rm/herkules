@@ -8,11 +8,11 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::get,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use tower::ServiceExt;
 use tower_http::services::ServeDir;
 
-use crate::{kb::entity_key, library::Library};
+use crate::{kb::entity_key, library::Library, resources};
 
 const OPEN: &str = "<!--bbs:head-->";
 const CLOSE: &str = "<!--/bbs:head-->";
@@ -137,6 +137,29 @@ async fn browser(State(state): State<WebState>, request: Request) -> Response {
     }
     let mut status = StatusCode::OK;
     let mut body = state.document.plain.clone();
+    if matches!(path.as_str(), "/resources" | "/resources/") {
+        body = resource_document(&state, "/resources", "规则与资料");
+    }
+    if let Some(id) = path
+        .strip_prefix("/resources/")
+        .filter(|tail| !tail.is_empty())
+    {
+        let id = id.strip_suffix('/').unwrap_or(id);
+        if resources::valid_id(id) {
+            match resources::title(state.library.pool(), id).await {
+                Ok(Some(title)) => {
+                    body = resource_document(&state, &format!("/resources/{id}"), &title)
+                }
+                Ok(None) => status = StatusCode::NOT_FOUND,
+                Err(error) => {
+                    tracing::error!(%error, "resource document metadata unavailable");
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
+            }
+        } else {
+            status = StatusCode::NOT_FOUND;
+        }
+    }
     if let Some(name) = path.strip_prefix("/kb/") {
         let name = name.strip_suffix('/').unwrap_or(name);
         if !name.contains('/') {
@@ -162,6 +185,18 @@ async fn browser(State(state): State<WebState>, request: Request) -> Response {
         Html(body),
     )
         .into_response()
+}
+
+fn resource_document(state: &WebState, path: &str, title: &str) -> String {
+    state.document.render(
+        &json!({
+            "title": title,
+            "description": "RoboMaster 规则与资料",
+            "path": path,
+            "type": "website",
+        }),
+        &state.origin,
+    )
 }
 
 fn decode_segment(raw: &str) -> Option<String> {

@@ -29,6 +29,13 @@
       "when": 1789032529622,
       "tag": "0003_bot_update_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795797810861,
+      "tag": "0004_resources",
+      "breakpoints": true
     }
   ]
 }

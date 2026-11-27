@@ -8,6 +8,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
+import { resourceCatalog, resourcePages } from "../../src/db/schema.ts";
 import type { TestBbs } from "../../tests/helpers.ts";
 import { APP_ORIGIN, createTestBbs, fetchVia } from "../../tests/helpers.ts";
 import { ApiError, createApi } from "../src/api/client.ts";
@@ -137,6 +138,38 @@ describe("q.* against the real app (fixture corpus)", () => {
     const status = await qc.fetchQuery(q.status());
     expect(status.articles.fetched).toBe(tags.total);
     expect(status.importedAt).not.toBeNull();
+  });
+
+  it("serves the resource catalog and pages to anonymous readers", async () => {
+    expect(await api.resourceCatalog()).toEqual({ tree: [], syncedAt: null });
+    const node = { id: "804039", title: "比赛规则 Rulebooks", children: [] };
+    const at = new Date("2026-10-28T06:15:00Z");
+    const page = {
+      id: node.id,
+      title: node.title,
+      html: "<p>Competition rules</p>",
+      attachments: [{ name: "Rules", url: "https://files.example/rules.pdf" }],
+      updatedAt: at,
+    };
+    await bbs.service.db.insert(resourceCatalog).values({ tree: [node], syncedAt: at });
+    await bbs.service.db
+      .insert(resourcePages)
+      .values([
+        page,
+        { ...page, html: "<p>Staged revision</p>", staged: true },
+        { ...page, id: "804051", staged: true },
+      ]);
+    expect(await qc.fetchQuery(q.resourceCatalog())).toEqual({
+      tree: [node],
+      syncedAt: at.toISOString(),
+    });
+    expect(await qc.fetchQuery(q.resourcePage(node.id))).toEqual({
+      ...page,
+      updatedAt: at.toISOString(),
+    });
+    expect(await qc.fetchQuery(q.resourcePage("804051"))).toBeNull();
+    expect(await qc.fetchQuery(q.resourcePage("99999"))).toBeNull();
+    expect((await caught(api.resourcePage("bad-id"))).status).toBe(400);
   });
 });
 

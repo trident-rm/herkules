@@ -18,6 +18,7 @@ import { FeedPage } from "./feed/FeedPage.tsx";
 import { EntityPage } from "./kb/EntityPage.tsx";
 import { KbPage } from "./kb/KbPage.tsx";
 import { ArticlePage } from "./reader/ArticlePage.tsx";
+import { ResourceDirectory, ResourceReader } from "./resources/ResourcePages.tsx";
 import { SearchPage } from "./search/SearchPage.tsx";
 import { App } from "./shell/App.tsx";
 import { NotFound } from "./shell/NotFound.tsx";
@@ -126,6 +127,27 @@ export const tagsRoute = createRoute({
   component: TagsPage,
 });
 
+export const resourcesRoute = createRoute({
+  getParentRoute: parent,
+  errorComponent,
+  path: "/resources",
+  loader: ({ context: { queryClient, q } }) => queryClient.ensureQueryData(q.resourceCatalog()),
+  component: ResourceDirectory,
+});
+
+export const resourceRoute = createRoute({
+  getParentRoute: parent,
+  errorComponent,
+  path: "/resources/$id",
+  loader: ({ context: { queryClient, q }, params }) =>
+    Promise.all([
+      queryClient.ensureQueryData(q.resourceCatalog()),
+      queryClient.ensureQueryData(q.resourcePage(params.id)),
+    ]),
+  pendingComponent: ReaderSkeleton,
+  component: ResourceReader,
+});
+
 export const statusRoute = createRoute({
   getParentRoute: parent,
   errorComponent,
@@ -156,6 +178,8 @@ export const routeTree = rootRoute.addChildren([
   articleRoute,
   kbRoute,
   entityRoute,
+  resourcesRoute,
+  resourceRoute,
   tagsRoute,
   statusRoute,
   aboutRoute,

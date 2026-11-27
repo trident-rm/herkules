@@ -30,6 +30,8 @@ import type { SearchIndex } from "../db/search/index.ts";
 import type { BbsDb } from "../db/index.ts";
 import { getArticle, getArticleAi, getContent, getHead, listArticles } from "./articles.ts";
 import { getEntity, getEntityHead, kbBrowse, listEntities } from "./kb.ts";
+import { getResourceCatalog, getResourcePage } from "./resources.ts";
+import type { ResourceCatalog, ResourcePage } from "./resources.ts";
 import { search } from "./search.ts";
 import { getStatus } from "./status.ts";
 import { getTags } from "./tags.ts";
@@ -90,6 +92,8 @@ export interface Library {
   entityHead(key: EntityKey): Promise<HeadMeta | null>;
   /** Counts for the Status page and MCP `library_status`. 1 query. */
   status(): Promise<LibraryStatus>;
+  resourceCatalog(): Promise<ResourceCatalog>;
+  resourcePage(id: string): Promise<ResourcePage | null>;
 }
 
 export function createLibrary(deps: LibraryDeps): Library {
@@ -106,5 +110,7 @@ export function createLibrary(deps: LibraryDeps): Library {
     entity: (key) => getEntity(deps, key),
     entityHead: (key) => getEntityHead(deps, key),
     status: () => getStatus(deps),
+    resourceCatalog: () => getResourceCatalog(deps.db),
+    resourcePage: (id) => getResourcePage(deps.db, id),
   };
 }

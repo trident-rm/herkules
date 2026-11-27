@@ -50,6 +50,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import type { ResourceAttachment, ResourceNode } from "../library/resources.ts";
 
 /** rm-wenku stored Unix milliseconds; precision 3 makes the round-trip exact. */
 const ms = (name: string) => timestamp(name, { withTimezone: true, precision: 3, mode: "date" });
@@ -228,6 +229,30 @@ export const sourceGuardState = pgTable("source_guard_state", {
   stateJson: jsonb("state_json").notNull(),
   updatedAt: ms("updated_at").notNull(),
 });
+
+/** The published RoboMaster wiki tree and the last complete check. */
+export const resourceCatalog = pgTable(
+  "resource_catalog",
+  {
+    id: integer("id").primaryKey().default(1),
+    tree: jsonb("tree").$type<ResourceNode[]>().notNull(),
+    syncedAt: ms("synced_at").notNull(),
+  },
+  (t) => [check("resource_catalog_singleton", sql`${t.id} = 1`)],
+);
+
+export const resourcePages = pgTable(
+  "resource_pages",
+  {
+    id: text("id").notNull(),
+    staged: boolean("staged").notNull().default(false),
+    title: text("title").notNull(),
+    html: text("html").notNull(),
+    attachments: jsonb("attachments").$type<ResourceAttachment[]>().notNull(),
+    updatedAt: ms("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.id, t.staged] })],
+);
 
 /**
  * APP-OWNED singleton: which RENDER_VERSION / NORMALIZE_VERSION / TITLE_VERSION produced the derived

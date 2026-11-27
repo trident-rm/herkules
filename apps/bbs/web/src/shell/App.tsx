@@ -35,6 +35,9 @@ export function App() {
             <Link className={NAV} to="/kb" activeProps={ACTIVE}>
               知识库
             </Link>
+            <Link className={NAV} to="/resources" activeProps={ACTIVE}>
+              规则与资料
+            </Link>
             <Link className={NAV} to="/tags" activeProps={ACTIVE}>
               标签
             </Link>

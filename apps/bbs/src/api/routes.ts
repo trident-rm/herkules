@@ -74,6 +74,7 @@ const param = <T extends z.ZodType>(schema: T) =>
 
 const idParam = z.object({ id: s.articleIdParam });
 const nameParam = z.object({ name: s.entityNameParam });
+const resourceParam = z.object({ id: z.string().regex(/^[1-9]\d{0,18}$/) });
 
 export function createApi(deps: ApiDeps) {
   const lib = deps.library;
@@ -134,6 +135,11 @@ export function createApi(deps: ApiDeps) {
       return ai ? c.json(ai) : c.json(notFound, 404);
     })
     .get("/tags", async (c) => c.json(await lib.tags()))
+    .get("/resources", async (c) => c.json(await lib.resourceCatalog()))
+    .get("/resources/:id", param(resourceParam), async (c) => {
+      const page = await lib.resourcePage(c.req.valid("param").id);
+      return page ? c.json(page) : c.json(notFound, 404);
+    })
     .get("/search", query(s.searchQuery), async (c) => {
       const q = c.req.valid("query");
       return c.json(await lib.search({ ...q, cursor: q.cursor as Cursor | undefined }));
