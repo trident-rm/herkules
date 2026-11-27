@@ -16,6 +16,13 @@ import { when } from "../format.ts";
 import { snippets } from "../setup.ts";
 import { Code, ErrorText, Muted, Section } from "../ui.tsx";
 
+function levelText(me: Me): string {
+  if (me.logging.user) return `${me.logging.user} (set for you)`;
+  const models = Object.entries(me.logging.models);
+  if (models.length === 0) return me.logging.default;
+  return models.map(([model, level]) => `${level} for ${model}`).join(", ");
+}
+
 export function KeysPage({ me }: { me: Me }) {
   const client = useQueryClient();
   const keys = useQuery({ queryKey: ["keys"], queryFn: api.keys });
@@ -101,21 +108,11 @@ export function KeysPage({ me }: { me: Me }) {
 
       <Section title="Setup">
         <p className="text-sm text-muted-foreground">
-          Models: {me.models.length ? me.models.join(", ") : "none available right now"}. Your
-          logging level:{" "}
-          {me.logging.user ??
-            (Object.values(me.logging.models).includes("full") ? "per model" : me.logging.default)}
-          {Object.keys(me.logging.models).length > 0 && !me.logging.user && (
-            <>
-              {" "}
-              (
-              {Object.entries(me.logging.models)
-                .map(([m, l]) => `${m}: ${l}`)
-                .join(", ")}
-              )
-            </>
-          )}
-          . Full logging stores request and response bodies, which you and admins can read.
+          Models: {me.models.length ? me.models.join(", ") : "none available right now"}.
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Your logging level: {levelText(me)}. Full logging stores request and response bodies,
+          which you and admins can read.
         </p>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {snippets(me.apiOrigin, model, secret ?? "<your key>").map((s) => (

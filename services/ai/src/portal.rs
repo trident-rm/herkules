@@ -141,7 +141,7 @@ async fn me(State(app): AppState, Extension(p): Extension<Principal>) -> Respons
         "logging": {
             "user": overrides.users.get(&p.subject),
             "models": logging,
-            "default": overrides.level(&p.subject, None),
+            "default": levels::METADATA,
         },
     }))
     .into_response()
