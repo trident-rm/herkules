@@ -15,6 +15,7 @@ describe("serviceHref", () => {
     expect(serviceHref(byId("bbs"), here)).toBe("https://bbs.herkules.dev/");
     expect(serviceHref(byId("status"), here)).toBe("https://status.herkules.dev/");
     expect(serviceHref(byId("ops"), here)).toBe("https://ops.herkules.dev/");
+    expect(serviceHref(byId("ai"), here)).toBe("https://ai-portal.herkules.dev/");
   });
 
   it("follows the origin to another domain, so a deploy needs no rebuild", () => {
@@ -28,6 +29,7 @@ describe("serviceHref", () => {
     expect(serviceHref(byId("bbs"), dev)).toBe("http://localhost:3003/");
     expect(serviceHref(byId("status"), dev)).toBe("http://status.localhost/");
     expect(serviceHref(byId("ops"), dev)).toBe("http://ops.localhost/");
+    expect(serviceHref(byId("ai"), dev)).toBe("http://localhost:4010/");
   });
 
   it("lists every public service before the gated ones", () => {

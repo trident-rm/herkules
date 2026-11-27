@@ -43,6 +43,7 @@ export interface ResourceSpec {
 export const RESOURCE_SPECS: readonly ResourceSpec[] = [
   { name: "feishu", kind: "mcp", title: "Feishu (MCP)" },
   { name: "bbs", kind: "api", title: "RM 文库" },
+  { name: "ai", kind: "api", title: "Herkules AI" },
   { name: "bbs", kind: "mcp", title: "RM 文库 (MCP)", canonical: true },
 ];
 

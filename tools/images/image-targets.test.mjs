@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { selectImageTargets } from "./image-targets.mjs";
-test("shared UI affects both browser images", () => {
+test("shared UI affects every browser image", () => {
   assert.deepEqual(selectImageTargets(["packages/ui/src/button.tsx"]).targets, [
     "bbs",
     "bbs-web",
+    "ai",
     "platform",
   ]);
 });
@@ -23,7 +24,13 @@ test("lockfile and publication machinery invalidate the complete image tuple", (
     ".github/workflows/image-build.yml",
     "tools/images/image-targets.mjs",
   ]) {
-    assert.deepEqual(selectImageTargets([path]).targets, ["auth", "bbs", "bbs-web", "platform"]);
+    assert.deepEqual(selectImageTargets([path]).targets, [
+      "auth",
+      "bbs",
+      "bbs-web",
+      "ai",
+      "platform",
+    ]);
   }
 });
 test("docs and license changes do not require images", () => {
@@ -45,14 +52,32 @@ test("local training changes do not trigger application images", () => {
   assert.deepEqual(selectImageTargets(["apps/training/README.md"]).targets, []);
 });
 
-test("Rust backend and shared auth changes rebuild the BBS runtime", () => {
+test("Rust workspace changes rebuild both Rust runtimes", () => {
   for (const path of [
     "Cargo.toml",
     "Cargo.lock",
     "apps/bbs/rust/src/http.rs",
     "packages/auth-rust/src/session.rs",
     "packages/feishu-rust/src/lib.rs",
+    "services/ai/Cargo.toml",
+    "services/ai/src/api.rs",
+    "services/ai/migrations/0001_init.sql",
   ]) {
-    assert.deepEqual(selectImageTargets([path]).targets, ["bbs", "bbs-web"]);
+    assert.deepEqual(selectImageTargets([path]).targets, ["bbs", "bbs-web", "ai"]);
   }
+});
+
+test("portal changes rebuild only the AI image", () => {
+  for (const path of [
+    "services/ai/web/src/App.tsx",
+    "services/ai/web/index.html",
+    "services/ai/web/vite.config.ts",
+    "services/ai/package.json",
+  ]) {
+    assert.deepEqual(selectImageTargets([path]).targets, ["ai"]);
+  }
+  assert.deepEqual(
+    selectImageTargets(["services/ai/README.md", "services/ai/tests/setup.test.ts"]).targets,
+    [],
+  );
 });

@@ -6,7 +6,7 @@ owns Terraform, Compose, routing, monitoring, backups, deployment and rollback.
 These links require infrastructure-repository access; application development and
 tests can run from this public repository alone.
 
-This repository builds `auth`, `bbs`, `bbs-web`, and `platform` images as one shared
+This repository builds `auth`, `bbs`, `bbs-web`, `ai`, and `platform` images as one shared
 BuildKit graph after CI checks pass. When image inputs change on `main` (or a manual
 run requests a build), CI publishes their immutable references as the `application`
 artifact (`application.json`). Documentation-only changes skip image publication.

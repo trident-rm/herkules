@@ -11,6 +11,9 @@ http://platform.test {
 http://bbs.test {
  import /routes/bbs.caddy
 }
+http://ai.test {
+ import /routes/ai.caddy
+}
 CADDY
 docker run --rm -v "$work/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$root/tools/images/caddy:/routes:ro" \
   caddy:2.10-alpine caddy adapt --config /etc/caddy/Caddyfile --adapter caddyfile > "$work/config.json"
@@ -18,7 +21,7 @@ python3 - "$work/config.json" <<'PY'
 import json, sys
 config = json.load(open(sys.argv[1]))
 encoded = json.dumps(config)
-for value in ['/auth/internal/*', '/auth/*', '/.well-known/*', '/mcp/bbs*', '/mcp/feishu*', 'feishu:3005', 'auth:3001', 'bbs:3003']:
+for value in ['/auth/internal/*', '/auth/*', '/.well-known/*', '/mcp/bbs*', '/mcp/feishu*', 'feishu:3005', 'auth:3001', 'bbs:3003', 'ai:4010']:
     assert value in encoded, value
 # The internal route must still reject requests; imports must not lose that guard.
 def visit(value):

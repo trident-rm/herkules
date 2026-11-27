@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 
-const allTargets = ["auth", "bbs", "bbs-web", "platform"];
+const allTargets = ["auth", "bbs", "bbs-web", "ai", "platform"];
 const nodeBuildInputs = new Set([
   "package.json",
   "pnpm-lock.yaml",
@@ -24,13 +24,18 @@ export function selectImageTargets(paths, { all = false } = {}) {
       ["Dockerfile", ".dockerignore", "tools/images/docker-bake.hcl"].includes(path)
     )
       add(...allTargets);
+    // One Rust build stage compiles the whole workspace for both Rust images.
     if (
       ["Cargo.toml", "Cargo.lock"].includes(path) ||
       path.startsWith("apps/bbs/rust/") ||
       path.startsWith("packages/auth-rust/") ||
-      path.startsWith("packages/feishu-rust/")
+      path.startsWith("packages/feishu-rust/") ||
+      path === "services/ai/Cargo.toml" ||
+      path.startsWith("services/ai/src/") ||
+      path.startsWith("services/ai/migrations/")
     )
-      add("bbs", "bbs-web");
+      add("bbs", "bbs-web", "ai");
+    if (isBuildInput(path, "services/ai", ["web/src", "web/public"])) add("ai");
     if (nodeBuildInputs.has(path) || path.startsWith("tsconfig")) add(...allTargets);
     if (isBuildInput(path, "services/feishu", ["src"])) add("auth");
     if (isBuildInput(path, "services/auth", ["src", "drizzle"])) add("auth");
@@ -39,7 +44,7 @@ export function selectImageTargets(paths, { all = false } = {}) {
       add("bbs", "bbs-web");
     if (isBuildInput(path, "packages/auth-middleware", ["src"])) add("auth", "bbs", "bbs-web");
     if (isBuildInput(path, "packages/oauth-client", ["src"])) add("bbs", "bbs-web");
-    if (isBuildInput(path, "packages/ui", ["src"])) add("bbs", "bbs-web", "platform");
+    if (isBuildInput(path, "packages/ui", ["src"])) add("bbs", "bbs-web", "ai", "platform");
   }
 
   const selected = allTargets.filter((target) => targets.has(target));
