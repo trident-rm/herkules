@@ -1,0 +1,30 @@
+{
+  "name": "@herkules/ai",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Herkules AI portal at ai-portal.herkules.dev: the static SPA that services/ai's Rust gateway serves. The gateway itself is the Cargo crate in this directory.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vp -C web dev",
+    "build": "vp -C web build",
+    "test": "vp test",
+    "check": "vp check"
+  },
+  "dependencies": {
+    "@herkules/ui": "workspace:*",
+    "@tanstack/react-query": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
