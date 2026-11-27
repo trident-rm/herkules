@@ -40,6 +40,8 @@ catalog:
   "@larksuiteoapi/node-sdk": 1.73.0
   ws: ^8.21.3
   "@types/ws": ^8.18.1
+  recharts: ^3.11.1
+  "@tanstack/react-virtual": ^3.14.28
 overrides:
   vite@*: "catalog:"
 peerDependencyRules:

@@ -1,0 +1,117 @@
+/*
+ * The AI portal's own look, on top of the shared cascade. It keeps the shared
+ * shadcn primitives and the token names they read, and replaces the token
+ * values: neutral greys, one blue accent, sans headings and a 14px root so
+ * every rem-sized primitive gets denser. The chart series colours follow the
+ * dataviz reference palette (blue, orange, aqua in that order). Dark is
+ * written twice for the same reason as in theme.css.
+ */
+@import "@herkules/ui/theme.css";
+
+:root {
+  --paper: #f7f7f8;
+  --surface: #ffffff;
+  --surface-2: #f1f1f3;
+  --ink: #18181b;
+  --ink-2: #3f3f46;
+  --muted: #6b6b74;
+  --line: #e3e3e7;
+  --line-2: #ededf0;
+  --accent: #2370cd;
+  --accent-ink: #ffffff;
+  --accent-soft: #e6effb;
+  --danger: #c62828;
+  --danger-soft: #fdecec;
+  --warn: #8a5a00;
+  --warn-soft: #fdf3dc;
+  --ok: #0a7d1e;
+  --ok-soft: #e5f5e8;
+  --display: var(--body);
+  --radius: 6px;
+  --series-1: #257de0;
+  --series-2: #f47230;
+  --series-3: #00b894;
+  --series-critical: #dc3c3d;
+  --series-neutral: #a1a1aa;
+  --grid: #ececef;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0c0c0e;
+    --surface: #141417;
+    --surface-2: #1c1c20;
+    --ink: #ececef;
+    --ink-2: #c3c3c9;
+    --muted: #8c8c95;
+    --line: #2a2a2f;
+    --line-2: #212125;
+    --accent: #3b8ee8;
+    --accent-ink: #ffffff;
+    --accent-soft: #15253a;
+    --danger: #f07a7a;
+    --danger-soft: #3a1717;
+    --warn: #e8c070;
+    --warn-soft: #36290f;
+    --ok: #4cc764;
+    --ok-soft: #12301a;
+    --series-1: #338ced;
+    --series-2: #e76624;
+    --series-3: #00a888;
+    --series-critical: #eb6263;
+    --series-neutral: #5d5d66;
+    --grid: #232327;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0c0c0e;
+  --surface: #141417;
+  --surface-2: #1c1c20;
+  --ink: #ececef;
+  --ink-2: #c3c3c9;
+  --muted: #8c8c95;
+  --line: #2a2a2f;
+  --line-2: #212125;
+  --accent: #3b8ee8;
+  --accent-ink: #ffffff;
+  --accent-soft: #15253a;
+  --danger: #f07a7a;
+  --danger-soft: #3a1717;
+  --warn: #e8c070;
+  --warn-soft: #36290f;
+  --ok: #4cc764;
+  --ok-soft: #12301a;
+  --series-1: #338ced;
+  --series-2: #e76624;
+  --series-3: #00a888;
+  --series-critical: #eb6263;
+  --series-neutral: #5d5d66;
+  --grid: #232327;
+}
+
+@theme inline {
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+}
+
+html {
+  font-size: 14px;
+}
+body {
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+}
+a:hover {
+  text-decoration: none;
+}
+
+/* Recharts draws its own focus outline on click; the hover layer is enough. */
+.recharts-wrapper,
+.recharts-surface {
+  outline: none;
+}
