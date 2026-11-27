@@ -2,12 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { selectImageTargets } from "./image-targets.mjs";
 test("shared UI affects every browser image", () => {
-  assert.deepEqual(selectImageTargets(["packages/ui/src/button.tsx"]).targets, [
-    "bbs",
-    "bbs-web",
-    "ai",
-    "platform",
-  ]);
+  const selection = selectImageTargets(["packages/ui/src/button.tsx"]);
+  assert.deepEqual(selection.targets, ["bbs", "bbs-web", "ai", "platform"]);
+  assert.deepEqual(selection.javascript, ["...{./packages/ui}"]);
 });
 test("application routes travel with the platform artifact", () => {
   assert.deepEqual(selectImageTargets(["tools/images/caddy/mcp/bbs.caddy"]).targets, ["platform"]);
@@ -16,7 +13,10 @@ test("public Markdown files are image inputs", () => {
   assert.deepEqual(selectImageTargets(["services/web/public/help.md"]).targets, ["platform"]);
 });
 test("documentation and infrastructure do not build application images", () => {
-  assert.deepEqual(selectImageTargets(["README.md", "tools/deploy/Caddyfile"]).targets, []);
+  const selection = selectImageTargets(["README.md", "tools/deploy/Caddyfile"]);
+  assert.deepEqual(selection.targets, []);
+  assert.deepEqual(selection.javascript, []);
+  assert.deepEqual(selection.rust, []);
 });
 
 test("lockfile and publication machinery invalidate the complete image tuple", () => {
@@ -71,7 +71,7 @@ test("AI Rust changes build AI and run only its Rust checks", () => {
     assert.deepEqual(selectImageTargets([path]), {
       targets: ["ai"],
       deploy: true,
-      javascript: false,
+      javascript: [],
       rust: ["herkules-ai"],
     });
   }
@@ -82,7 +82,7 @@ test("BBS native and Feishu transport changes keep the BBS images paired", () =>
   assert.deepEqual(selectImageTargets(["packages/feishu-rust/src/lib.rs"]), {
     targets: ["bbs", "bbs-web"],
     deploy: true,
-    javascript: false,
+    javascript: [],
     rust: ["herkules-bbs", "herkules-feishu"],
   });
 });
@@ -91,7 +91,7 @@ test("contract vectors run both language checks without publishing images", () =
   assert.deepEqual(selectImageTargets(["docs/tokens-vectors.json"]), {
     targets: [],
     deploy: false,
-    javascript: true,
+    javascript: ["./packages/auth-middleware"],
     rust: ["herkules-auth"],
   });
 });
@@ -103,10 +103,52 @@ test("portal changes rebuild only the AI image", () => {
     "services/ai/web/vite.config.ts",
     "services/ai/package.json",
   ]) {
-    assert.deepEqual(selectImageTargets([path]).targets, ["ai"]);
+    const selection = selectImageTargets([path]);
+    assert.deepEqual(selection.targets, ["ai"]);
+    assert.deepEqual(selection.javascript, ["...{./services/ai}"]);
+    assert.deepEqual(selection.rust, []);
   }
   assert.deepEqual(
     selectImageTargets(["services/ai/README.md", "services/ai/tests/setup.test.ts"]).targets,
     [],
   );
+});
+
+test("workspace-only tests do not select dependents", () => {
+  assert.deepEqual(
+    selectImageTargets(["services/auth/tests/flow.test.ts", "apps/bbs/web/tests/app.test.ts"])
+      .javascript,
+    ["./apps/bbs", "./services/auth"],
+  );
+});
+
+test("Feishu is checked when its inherited auth config changes", () => {
+  assert.deepEqual(selectImageTargets(["services/auth/tsconfig.json"]).javascript, [
+    "...{./services/auth}",
+    "./services/feishu",
+  ]);
+});
+
+test("shared JavaScript inputs trigger full workspace checks", () => {
+  assert.deepEqual(
+    selectImageTargets(["pnpm-lock.yaml", "services/ai/web/src/App.tsx"]).javascript,
+    ["."],
+  );
+  assert.deepEqual(selectImageTargets([], { all: true }).javascript, ["."]);
+});
+
+test("changes to component hook configs run their JavaScript and Rust checks without images", () => {
+  for (const [root, crate] of [
+    ["apps/bbs", "herkules-bbs"],
+    ["services/ai", "herkules-ai"],
+  ]) {
+    const selection = selectImageTargets([`${root}/prek.toml`]);
+    assert.deepEqual(selection.targets, []);
+    assert.deepEqual(selection.javascript, [`...{./${root}}`]);
+    assert.deepEqual(selection.rust, [crate]);
+  }
+  const shared = selectImageTargets(["prek.toml"]);
+  assert.deepEqual(shared.targets, []);
+  assert.deepEqual(shared.javascript, ["."]);
+  assert.deepEqual(shared.rust, selectImageTargets([], { all: true }).rust);
 });

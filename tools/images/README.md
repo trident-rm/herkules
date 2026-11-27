@@ -19,9 +19,16 @@ as a versioned interface; coordinate an incompatible change before promotion.
 `vp run test:images` checks image-selection rules. Browser API response validation
 remains covered by `services/web` tests; static-delivery tests belong to infrastructure.
 
-Documentation-only changes run the image selector tests and secret scan. The
-JavaScript and Rust checks run when their inputs change. To run the legacy BBS
-comparisons with Postgres, manually run CI with the `parity` option.
+CI scans introduced commits for secrets and runs the selector tests when its code
+or workflow changes. JavaScript CI checks changed workspaces and their consumers,
+including development dependencies used by integration tests. Changes inside a
+workspace's tests check that workspace.
+Rust CI formats, lints, and tests the selected crates in one Cargo build graph when
+several crates are affected. Shared lockfiles and workspace configuration can select
+every workspace for that language. Pull requests are
+checked against their base. On `main`, CI includes pending changes since the
+last successful image publication. See [contributor checks](../../CONTRIBUTING.md)
+for local component checks, history scans and legacy BBS parity.
 
 `bbs-web` is the Rust-only web runtime (nonroot Rust PID 1, static Vite frontend,
 no Node); its `bot` command runs the Rust Feishu bot and its `work` command runs the Rust crawler without an HTTP listener or auth configuration. Worker and bot deployments must override the web HTTP healthcheck; use status

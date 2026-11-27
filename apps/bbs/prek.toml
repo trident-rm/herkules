@@ -1,0 +1,37 @@
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "build-js"
+name = "Build BBS and its JavaScript dependencies"
+entry = "pnpm exec vp run -t build"
+language = "system"
+stages = ["manual"]
+pass_filenames = false
+priority = 0
+
+[[repos.hooks]]
+id = "check-js"
+name = "Check BBS JavaScript"
+entry = "pnpm exec vp check"
+language = "system"
+stages = ["manual"]
+pass_filenames = false
+priority = 10
+
+[[repos.hooks]]
+id = "test-js"
+name = "Test BBS JavaScript"
+entry = "pnpm exec vp run test"
+language = "system"
+stages = ["manual"]
+pass_filenames = false
+priority = 20
+
+[[repos.hooks]]
+id = "rust"
+name = "Check and test BBS Rust"
+entry = "bash -ec 'cargo fmt -p herkules-bbs --check && cargo clippy -p herkules-bbs --all-targets --locked -- -D warnings && cargo test -p herkules-bbs --locked'"
+language = "system"
+stages = ["manual"]
+pass_filenames = false

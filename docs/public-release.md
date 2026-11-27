@@ -40,8 +40,9 @@ application security or cover deleted/unavailable content. Outstanding defects i
   The default Actions token is read-only; image publication runs only on `main`
   outside pull-request events. Application Actions store no production secrets.
 - External Actions are pinned to commit hashes, with grouped Dependabot updates.
-- CI scans reachable Git history with checksum-pinned Gitleaks and redacted output.
-  Tested application manifests require that scan and the build/test checks.
+- CI scans introduced commits with checksum-pinned Gitleaks and redacted output.
+  Tested application manifests require that scan and the build and test checks.
+  Use the local audit below to scan all reachable refs.
 - [`.gitleaks.toml`](../.gitleaks.toml) contains narrow exceptions for public test
   vectors, deterministic test credentials, a historical public encryption key,
   and a prose false positive. Review exception changes carefully.

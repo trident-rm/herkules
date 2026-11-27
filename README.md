@@ -85,10 +85,10 @@ application-owned Caddy fragments. `vp run dev` remains self-contained.
 
 ## Contributing and security
 
-Read the relevant workspace README before making a change and run `vp run ready`
-before submitting a pull request. CI runs language checks for changed inputs and
-publishes application images when their inputs change. Outside contributors'
-workflow runs require maintainer approval.
+Read the relevant workspace README before making a change and follow the
+[contributor checks](CONTRIBUTING.md) before submitting a pull request. CI checks
+affected workspaces and publishes application images when their inputs change.
+Outside contributors' workflow runs require maintainer approval.
 
 Report vulnerabilities through [private vulnerability reporting](SECURITY.md),
 not a public issue. The [public-release record](docs/public-release.md) documents

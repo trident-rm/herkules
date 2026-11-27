@@ -9,11 +9,11 @@ const nodeBuildInputs = new Set([
   "vite.config.ts",
 ]);
 export function selectImageTargets(paths, { all = false } = {}) {
-  if (all) return { targets: allTargets, deploy: true, javascript: true, rust: rustPackages };
+  if (all) return { targets: allTargets, deploy: true, javascript: ["."], rust: rustPackages };
 
   const targets = new Set();
+  const javascript = new Set();
   const rust = new Set();
-  let javascript = false;
   const add = (...names) => names.forEach((name) => targets.add(name));
 
   for (const path of paths) {
@@ -29,24 +29,31 @@ export function selectImageTargets(paths, { all = false } = {}) {
       (path.startsWith("services/ai/tests/") && path.endsWith(".rs"));
     const rustWorkspace = ["Cargo.toml", "Cargo.lock"].includes(path);
     const ciConfig = path.startsWith(".github/workflows/");
+    const prekRoot = path === "prek.toml";
     const tokenVectors = path === "docs/tokens-vectors.json";
-    if (
-      ciConfig ||
-      tokenVectors ||
-      path.startsWith("tsconfig") ||
-      nodeBuildInputs.has(path) ||
-      (!bbsRust && !authRust && !feishuRust && !aiRust && /^(apps|packages|services)\//.test(path))
-    )
-      javascript = true;
-    if (ciConfig || rustWorkspace) rustPackages.forEach((name) => rust.add(name));
+    if (ciConfig || prekRoot || path.startsWith("tsconfig") || nodeBuildInputs.has(path)) {
+      javascript.add(".");
+    } else if (!bbsRust && !authRust && !feishuRust && !aiRust) {
+      const workspace = path.match(/^((?:apps|packages|services)\/[^/]+)\/(.+)/);
+      if (workspace) {
+        const [, root, file] = workspace;
+        // Tests do not change what a dependent imports from this workspace.
+        javascript.add(/^(web\/)?tests\//.test(file) ? `./${root}` : `...{./${root}}`);
+      }
+      if (tokenVectors) javascript.add("./packages/auth-middleware");
+      // Feishu extends this config without a pnpm dependency on the auth service.
+      if (path === "services/auth/tsconfig.json") javascript.add("./services/feishu");
+    }
+    if (ciConfig || prekRoot || rustWorkspace) rustPackages.forEach((name) => rust.add(name));
     if (
       bbsRust ||
       feishuRust ||
       authRust ||
+      path === "apps/bbs/prek.toml" ||
       path.startsWith("apps/bbs/tests/fixtures/title-parser/")
     )
       rust.add("herkules-bbs");
-    if (aiRust || authRust) rust.add("herkules-ai");
+    if (aiRust || authRust || path === "services/ai/prek.toml") rust.add("herkules-ai");
     if (authRust || tokenVectors) rust.add("herkules-auth");
     if (feishuRust) rust.add("herkules-feishu");
     if (path.startsWith("tools/images/caddy/") || path === "tools/images/caddy.test.sh")
@@ -82,7 +89,7 @@ export function selectImageTargets(paths, { all = false } = {}) {
   return {
     targets: selected,
     deploy: selected.length > 0,
-    javascript,
+    javascript: javascript.has(".") ? ["."] : [...javascript].sort(),
     rust: rustPackages.filter((name) => rust.has(name)),
   };
 }
@@ -111,6 +118,6 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (!all) {
     for await (const chunk of process.stdin) input += chunk;
   }
-  const paths = input.split("\n");
+  const paths = input.split(input.includes("\0") ? "\0" : "\n");
   process.stdout.write(`${JSON.stringify(selectImageTargets(paths, { all }))}\n`);
 }

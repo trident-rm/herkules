@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   changes:
+    if: "!inputs.parity"
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -31,7 +32,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - run: node --test tools/images/*.test.mjs
       - id: select
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,21 +67,43 @@ jobs:
           fi
 
           if [[ -n "$base" ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
-            selection=$(git diff --no-renames --name-only "$base" "$GITHUB_SHA" | node tools/images/image-targets.mjs)
+            echo "base=$base" >> "$GITHUB_OUTPUT"
+            selection=$(git diff --no-renames --name-only -z "$base" "$GITHUB_SHA" | node tools/images/image-targets.mjs)
           else
+            base=''
             selection=$(node tools/images/image-targets.mjs --all)
+          fi
+          if [[ -z "$base" ]] || ! git diff --quiet "$base" "$GITHUB_SHA" -- \
+            .github/workflows/ci.yml tools/images/image-targets.mjs tools/images/image-targets.test.mjs; then
+            node --test tools/images/*.test.mjs
           fi
           {
             echo "targets=$(jq -c '.targets' <<< "$selection")"
-            echo "javascript=$(jq -r '.javascript' <<< "$selection")"
+            echo "javascript=$(jq -c '.javascript' <<< "$selection")"
             echo "rust=$(jq -r '.rust | join(" ")' <<< "$selection")"
             echo "previous-images=$previous"
           } >> "$GITHUB_OUTPUT"
+      - name: Install checksum-pinned Gitleaks
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$RUNNER_TEMP/gitleaks.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan introduced commits with redacted output
+        env:
+          BASE: ${{ steps.select.outputs.base }}
+        run: |
+          revisions="$GITHUB_SHA"
+          if [[ -n "$BASE" ]]; then
+            revisions="$BASE..$GITHUB_SHA"
+          fi
+          "$RUNNER_TEMP/gitleaks" git --redact --log-opts="--diff-merges=first-parent $revisions"
 
   images:
-    needs: [changes, ready, rust, secrets]
+    needs: [changes, ready, rust]
     if: >-
-      !cancelled() && needs.changes.result == 'success' && needs.secrets.result == 'success' &&
+      !cancelled() && needs.changes.result == 'success' &&
       (needs.ready.result == 'success' || needs.ready.result == 'skipped') &&
       (needs.rust.result == 'success' || needs.rust.result == 'skipped') &&
       needs.changes.outputs.targets != '[]' && github.ref == 'refs/heads/main' &&
@@ -95,27 +117,9 @@ jobs:
       targets: ${{ needs.changes.outputs.targets }}
       previous-images: ${{ needs.changes.outputs.previous-images }}
 
-  secrets:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Install checksum-pinned Gitleaks
-        run: |
-          curl --fail --silent --show-error --location --retry 3 \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
-            --output "$RUNNER_TEMP/gitleaks.tar.gz"
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
-      - name: Scan reachable history with redacted output
-        run: '"$RUNNER_TEMP/gitleaks" git --redact --log-opts="--all"'
-
   ready:
     needs: changes
-    if: needs.changes.outputs.javascript == 'true' && !inputs.parity
+    if: needs.changes.outputs.javascript != '[]' && !inputs.parity
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -135,9 +139,68 @@ jobs:
           path: ${{ steps.pnpm.outputs.store }}
           key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'pnpm-lock.yaml') }}
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec vp run -r build
-      - run: pnpm exec vp check
-      - run: pnpm exec vp run -r test
+      - name: Resolve affected JavaScript workspaces
+        id: workspaces
+        env:
+          FILTERS: ${{ needs.changes.outputs.javascript }}
+        run: |
+          if [[ "$FILTERS" == '["."]' ]]; then
+            affected=$(pnpm -r list --depth -1 --json)
+          else
+            filters=()
+            while IFS= read -r filter; do filters+=(--filter "$filter"); done < <(jq -r '.[]' <<< "$FILTERS")
+            affected=$(pnpm "${filters[@]}" list --depth -1 --json)
+          fi
+          affected=$(jq -c --arg root "$PWD" \
+            '[.[] | select(.path != $root) | {name, path: (.path | ltrimstr($root + "/"))}]' <<< "$affected")
+          echo "affected=$affected" >> "$GITHUB_OUTPUT"
+      - uses: j178/prek-action@7b101f8338a08d2bd6fdb3625e4e7692428763a3 # v3.1.1
+        if: contains(steps.workspaces.outputs.affected, '"@herkules/ai"') || contains(steps.workspaces.outputs.affected, '"@herkules/bbs"')
+        with:
+          install-only: true
+          cache: false
+          prek-version: "0.5.11"
+      - name: Build, check and test affected workspaces
+        env:
+          AFFECTED: ${{ steps.workspaces.outputs.affected }}
+          FULL: ${{ needs.changes.outputs.javascript == '["."]' }}
+        run: |
+          build=()
+          paths=()
+          tests=()
+          hooks=()
+          while IFS=$'\t' read -r name path; do
+            build+=(--filter "$name...")
+            case "$name" in
+              @herkules/ai|@herkules/bbs)
+                if [[ "$FULL" != true ]]; then
+                  hooks+=("$path:check-js")
+                fi
+                hooks+=("$path:test-js")
+                ;;
+              *)
+                paths+=("$path")
+                tests+=(--filter "$name")
+                ;;
+            esac
+          done < <(jq -r '.[] | [.name, .path] | @tsv' <<< "$AFFECTED")
+
+          # Build each dependency once before invoking the component hooks.
+          if [[ "$FULL" == true ]]; then
+            pnpm exec vp run -r build
+            pnpm exec vp check
+          elif (( ${#build[@]} )); then
+            pnpm exec vp run "${build[@]}" build
+            if (( ${#paths[@]} )); then
+              pnpm exec vp check "${paths[@]}"
+            fi
+          fi
+          if (( ${#hooks[@]} )); then
+            prek run --all-files --hook-stage manual --verbose "${hooks[@]}"
+          fi
+          if (( ${#tests[@]} )); then
+            pnpm exec vp run "${tests[@]}" test
+          fi
 
   rust:
     needs: changes
@@ -148,20 +211,34 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - if: contains(needs.changes.outputs.rust, 'herkules-bbs') || contains(needs.changes.outputs.rust, 'herkules-feishu')
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo fmt --all --check
-      - name: Lint and test affected packages
+      - uses: j178/prek-action@7b101f8338a08d2bd6fdb3625e4e7692428763a3 # v3.1.1
+        if: needs.changes.outputs.rust == 'herkules-ai' || needs.changes.outputs.rust == 'herkules-bbs'
+        with:
+          install-only: true
+          cache: false
+          prek-version: "0.5.11"
+      - name: Format, lint and test affected packages
         env:
           PACKAGES: ${{ needs.changes.outputs.rust }}
         run: |
-          args=()
-          for package in $PACKAGES; do args+=(-p "$package"); done
-          cargo clippy --all-targets --locked "${args[@]}" -- -D warnings
-          cargo test --locked "${args[@]}"
+          case "$PACKAGES" in
+            herkules-ai) prek run --all-files --hook-stage manual --verbose services/ai:rust ;;
+            herkules-bbs) prek run --all-files --hook-stage manual --verbose apps/bbs:rust ;;
+            *)
+              # Check shared changes in one Cargo graph to reuse dependency builds.
+              args=()
+              for package in $PACKAGES; do args+=(-p "$package"); done
+              cargo fmt "${args[@]}" --check
+              cargo clippy --all-targets --locked "${args[@]}" -- -D warnings
+              cargo test --locked "${args[@]}"
+              ;;
+          esac
 
   bbs-rust:
     if: github.event_name == 'workflow_dispatch' && inputs.parity
