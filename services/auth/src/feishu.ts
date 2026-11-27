@@ -1,4 +1,6 @@
 /** Feishu profile and admission policy. OAuth state, PKCE and token exchange belong to Better Auth. */
+import { createHash } from "node:crypto";
+import type { BetterAuthPlugin } from "better-auth";
 import { z } from "zod";
 import type { Audit } from "./audit.ts";
 import type { Config } from "./config.ts";
@@ -13,6 +15,36 @@ export const FEISHU_SCOPES = [
   "contact:user.email:readonly",
   "offline_access",
 ];
+
+function feishuCodeVerifier(verifier: string): string {
+  // Use the 43-character format in Feishu's OAuth example. Better Auth stores
+  // the random source in OAuth state, so both requests derive the same verifier.
+  return createHash("sha256").update(verifier).digest("base64url");
+}
+
+export const feishuPkce: BetterAuthPlugin = {
+  id: "feishu-pkce",
+  init(ctx) {
+    const socialProviders = ctx.socialProviders.map((provider): typeof provider => {
+      if (provider.id !== "feishu") return provider;
+      return {
+        ...provider,
+        createAuthorizationURL: (data) =>
+          provider.createAuthorizationURL({
+            ...data,
+            codeVerifier: feishuCodeVerifier(data.codeVerifier),
+          }),
+        validateAuthorizationCode: (data) =>
+          provider.validateAuthorizationCode({
+            ...data,
+            codeVerifier: data.codeVerifier && feishuCodeVerifier(data.codeVerifier),
+          }),
+      };
+    });
+    return { context: { socialProviders } };
+  },
+};
+
 const identity = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const profileSchema = z.object({
   tenant_key: identity,

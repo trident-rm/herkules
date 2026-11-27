@@ -50,11 +50,11 @@ class FakeFeishu {
       }
       const code = this.codes.get(body.get("code") ?? "");
       this.codes.delete(body.get("code") ?? "");
+      const verifier = body.get("code_verifier") ?? "";
       if (
         !code ||
-        createHash("sha256")
-          .update(body.get("code_verifier") ?? "")
-          .digest("base64url") !== code.challenge ||
+        !/^[A-Za-z0-9_-]{43}$/.test(verifier) ||
+        createHash("sha256").update(verifier).digest("base64url") !== code.challenge ||
         body.get("redirect_uri") !== code.redirect
       )
         return Response.json({ error: "invalid_grant" }, { status: 400 });
