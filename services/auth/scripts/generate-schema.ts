@@ -42,6 +42,7 @@ function stubDeps(): AuthDeps {
     gate: { stampLogin: unreachable, recheck: unreachable, reject: unreachable },
     audit: { record: unreachable, list: unreachable },
     feishu: {
+      exchangeCode: unreachable,
       profile: unreachable,
       decide: unreachable,
       reject: unreachable,

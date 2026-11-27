@@ -109,8 +109,11 @@ In the Feishu developer console, enable and publish `contact:user.base:readonly`
 `contact:user.email:readonly`, and `offline_access`, and give users app access.
 Register `${PUBLIC_ORIGIN}/auth/callback/feishu` as the redirect URI
 (`http://localhost:3000/auth/callback/feishu` locally). Better Auth's generic OAuth
-provider handles state, PKCE, code exchange and refresh against the standard
-[v3 token endpoint](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/get-user-access-token-v3).
+provider handles state and S256 PKCE. Feishu pairs PKCE with the v2 code exchange,
+which Herkules calls with JSON. Better Auth uses v3 to refresh tokens issued by
+either version. [Authorization guide](https://open.feishu.cn/document/common-capabilities/sso/api/obtain-oauth-code) ·
+[v2 code exchange](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/get-user-access-token) ·
+[v3 refresh](https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/refresh-user-access-token-v3)
 
 The [user-info endpoint](https://open.feishu.cn/document/server-docs/authentication-management/login-state-management/get)
 provides `tenant_key`, app-scoped `open_id`, and `email`. Identity is the immutable

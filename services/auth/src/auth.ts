@@ -24,7 +24,7 @@ import { admin } from "better-auth/plugins/admin";
 import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import {
   FEISHU_AUTHORIZE,
-  FEISHU_TOKEN,
+  FEISHU_REFRESH,
   FEISHU_SCOPES,
   FEISHU_ERRORS,
   feishuEmail,
@@ -450,11 +450,12 @@ export function authOptions(deps: AuthDeps) {
                   clientId: config.FEISHU_APP_ID,
                   clientSecret: config.FEISHU_APP_SECRET!,
                   authorizationUrl: FEISHU_AUTHORIZE,
-                  tokenUrl: FEISHU_TOKEN,
+                  tokenUrl: FEISHU_REFRESH,
                   scopes: FEISHU_SCOPES,
                   pkce: true,
                   authentication: "post",
                   overrideUserInfo: true,
+                  getToken: (data) => deps.feishu.exchangeCode(data),
                   getUserInfo: async (tokens) => {
                     const p = tokens.accessToken
                       ? await deps.feishu.profile(tokens.accessToken)

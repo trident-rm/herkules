@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vite-plus/test";
 import { eq } from "drizzle-orm";
 import { createTestService, type TestService } from "../src/testing.ts";
-import { FEISHU_TOKEN, FEISHU_USER_INFO, type FeishuProfile } from "../src/feishu.ts";
+import { FEISHU_USER_INFO, type FeishuProfile } from "../src/feishu.ts";
 import { account, user, session as sessionTable } from "../src/db/schema.ts";
 import { loadConfig } from "../src/config.ts";
 
@@ -35,30 +35,40 @@ class FakeFeishu {
   unavailable = false;
   fetch: typeof globalThis.fetch = async (input, init) => {
     const req = new Request(input, init);
-    if (req.url === FEISHU_TOKEN) {
+    if (req.url === "https://accounts.feishu.cn/oauth/v3/token") {
       const body = new URLSearchParams(await req.text());
       expect(body.get("client_secret")).toBe("test-feishu-secret");
-      if (body.get("grant_type") === "refresh_token") {
-        this.refreshes++;
-        return Response.json({
-          access_token: body.get("refresh_token")!.slice(8),
-          token_type: "Bearer",
-          expires_in: 7200,
-          refresh_token: body.get("refresh_token"),
-          refresh_token_expires_in: 604800,
-        });
-      }
-      const code = this.codes.get(body.get("code") ?? "");
-      this.codes.delete(body.get("code") ?? "");
-      const verifier = body.get("code_verifier") ?? "";
+      expect(body.get("grant_type")).toBe("refresh_token");
+      this.refreshes++;
+      return Response.json({
+        access_token: body.get("refresh_token")!.slice(8),
+        token_type: "Bearer",
+        expires_in: 7200,
+        refresh_token: body.get("refresh_token"),
+        refresh_token_expires_in: 604800,
+      });
+    }
+    if (req.url === "https://open.feishu.cn/open-apis/authen/v2/oauth/token") {
+      expect(req.method).toBe("POST");
+      expect(req.headers.get("content-type")).toBe("application/json");
+      const body = (await req.json()) as Record<string, string>;
+      expect(body).toMatchObject({
+        client_id: "feishu-test",
+        client_secret: "test-feishu-secret",
+        grant_type: "authorization_code",
+      });
+      const code = this.codes.get(body.code ?? "");
+      this.codes.delete(body.code ?? "");
+      const verifier = body.code_verifier ?? "";
       if (
         !code ||
         !/^[A-Za-z0-9_-]{43}$/.test(verifier) ||
         createHash("sha256").update(verifier).digest("base64url") !== code.challenge ||
-        body.get("redirect_uri") !== code.redirect
+        body.redirect_uri !== code.redirect
       )
         return Response.json({ error: "invalid_grant" }, { status: 400 });
       return Response.json({
+        code: 0,
         access_token: code.token,
         token_type: "Bearer",
         expires_in: 7200,
