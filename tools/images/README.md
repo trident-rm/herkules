@@ -1,8 +1,10 @@
 # Application image contract
 
-The root Dockerfile publishes `auth`, `bbs`, `bbs-web`, `ai` and `platform`. After all checks
-pass, CI builds all five in one shared BuildKit graph when image inputs change
-(or on a manual run), then emits the `application` artifact.
+The root Dockerfile publishes `auth`, `bbs`, `bbs-web`, `ai` and `platform`. CI on
+`main` compares inputs against a previous successful publication and builds the
+affected targets together. The `application` artifact carries their new digests
+and reuses the previous digests for unchanged images. CI builds all five for a
+manual publication or when it cannot recover the previous manifest.
 Production promotion is a separate reviewed change in `herkules-infra`.
 
 `platform` is an artifact-only image: `/srv` contains the built frontend and `/caddy`
@@ -17,23 +19,22 @@ as a versioned interface; coordinate an incompatible change before promotion.
 `vp run test:images` checks image-selection rules. Browser API response validation
 remains covered by `services/web` tests; static-delivery tests belong to infrastructure.
 
-Documentation-only changes still run checks, but skip image publication.
+Documentation-only changes run the image selector tests and secret scan. The
+JavaScript and Rust checks run when their inputs change. To run the legacy BBS
+comparisons with Postgres, manually run CI with the `parity` option.
 
 `bbs-web` is the Rust-only web runtime (nonroot Rust PID 1, static Vite frontend,
 no Node); its `bot` command runs the Rust Feishu bot and its `work` command runs the Rust crawler without an HTTP listener or auth configuration. Worker and bot deployments must override the web HTTP healthcheck; use status
 freshness monitoring for both. `bbs` remains the Node jobs/migration image and hybrid rollback target.
-The new digest is emitted as `images["bbs-web"]` in `application.json`; infrastructure
-must accept this optional fifth image before promoting a new manifest. Older
-four-image manifests remain usable through infrastructure's legacy fallback.
+The manifest records separate `bbs` and `bbs-web` digests. Infrastructure promotes
+them together and can still read older manifests that omit `bbs-web`.
 Both images carry the same frontend build under `/app/dist/client`.
 
-Before publication, CI builds the actual `bbs` and `bbs-web` images and runs
-`bbs-web.test.sh` with disposable Postgres. Schema preparation must finish before
-starting the Rust web service. Production Compose sequencing belongs to infrastructure.
+CI builds `bbs` and `bbs-web` together and tests the exact digests with
+`bbs-web.test.sh` and disposable Postgres before emitting the promotion manifest.
+Production Compose runs schema preparation before starting the Rust web service.
 
 `ai` is the AI gateway and portal (`services/ai`): one Rust binary as PID 1, nonroot,
 with the Vite-built portal under `/app/dist/client`. It applies its own migrations to its
-own database at start and listens on port 4010. The `rust-build` stage compiles the whole
-Cargo workspace once for both `bbs-web` and `ai`, so a change to any workspace crate
-rebuilds both. Infrastructure must accept `images.ai` in `application.json` before it
-promotes a manifest that carries it.
+own database at start and listens on port 4010. The AI and BBS binary stages
+compile separately. Changes to shared Rust auth code or the Cargo lockfile select both.

@@ -6,7 +6,7 @@ The team's self-hosted identity layer and internal application monorepo. The wor
 
 - `vp install` — after pulling remote changes
 - `vp run dev` — the whole local stack: auth :3001, web :3000, bbs :3103 + :3003
-- `vp run ready` — recursive build, `vp check`, recursive test (what CI runs)
+- `vp run ready` — full local validation. CI selects language checks by changed inputs.
 - `vp check` / `vp test` — format, lint, type-check / test the current workspace
 - `vp run <pkg>#<script>` — a package script, e.g. `vp run @herkules/bbs#import <path>/app.db`
 

@@ -1,7 +1,13 @@
 name: Image build
-# Application artifacts only; shared BuildKit graph runs after successful CI checks.
 on:
   workflow_call:
+    inputs:
+      targets:
+        required: true
+        type: string
+      previous-images:
+        required: true
+        type: string
 permissions:
   contents: read
 env:
@@ -18,14 +24,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.BUILD_SHA }}
-          fetch-depth: 0
           persist-credentials: false
       - id: rev
         env:
-          TARGETS: '["auth","bbs","bbs-web","ai","platform"]'
+          TARGETS: ${{ inputs.targets }}
         run: |
           echo "short=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
           echo "bake=$(jq -r 'join(",")' <<<"$TARGETS")" >> "$GITHUB_OUTPUT"
+      - name: Verify application route fragments
+        if: contains(fromJSON(inputs.targets), 'platform')
+        run: sh tools/images/caddy.test.sh
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
@@ -54,7 +62,7 @@ jobs:
         env:
           METADATA: ${{ steps.bake.outputs.metadata }}
           SHORT_SHA: ${{ steps.rev.outputs.short }}
-          TARGETS: '["auth","bbs","bbs-web","ai","platform"]'
+          TARGETS: ${{ inputs.targets }}
         run: |
           mkdir -p image-update
           for target in $(jq -r '.[]' <<<"$TARGETS"); do
@@ -68,8 +76,36 @@ jobs:
               --arg image "ghcr.io/$GITHUB_REPOSITORY/$target:sha-$SHORT_SHA@$digest" \
               '{target: $target, image: $image}' > "image-update/$target.json"
           done
+      - name: Verify the published BBS runtime and schema preparation together
+        if: contains(fromJSON(inputs.targets), 'bbs-web')
+        run: |
+          BBS_JOBS_TEST_IMAGE=$(jq -r '.image' image-update/bbs.json)
+          BBS_WEB_TEST_IMAGE=$(jq -r '.image' image-update/bbs-web.json)
+          export BBS_JOBS_TEST_IMAGE BBS_WEB_TEST_IMAGE
+          docker pull "$BBS_JOBS_TEST_IMAGE"
+          docker pull "$BBS_WEB_TEST_IMAGE"
+          sh tools/images/bbs-web.test.sh
+      - name: Update convenience tags for verified images
+        run: |
+          for update in image-update/*.json; do
+            target=$(jq -r '.target' "$update")
+            image=$(jq -r '.image' "$update")
+            docker buildx imagetools create --prefer-index=false \
+              --tag "ghcr.io/$GITHUB_REPOSITORY/$target:latest" "$image"
+          done
+      - name: Assemble tested application manifest
+        env:
+          PREVIOUS_IMAGES: ${{ inputs.previous-images }}
+        run: |
+          jq -s --arg source "$BUILD_SHA" --arg repository "$GITHUB_REPOSITORY" \
+            --argjson previous "$PREVIOUS_IMAGES" \
+            '{schemaVersion: 1, repository: $repository, sourceSha: $source,
+              images: ($previous + (map({key: .target, value: .image}) | from_entries))}
+              | if (.images | keys) == ["ai","auth","bbs","bbs-web","platform"] then .
+                else error("incomplete application manifest") end' \
+            image-update/*.json > application.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: image-updates
-          path: image-update/*.json
+          name: application
+          path: application.json
           if-no-files-found: error

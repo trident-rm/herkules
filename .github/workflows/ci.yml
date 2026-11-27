@@ -2,11 +2,15 @@ name: CI
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      parity:
+        description: Run the legacy BBS comparisons with Postgres
+        type: boolean
+        default: false
   push:
     branches: [main]
 permissions:
   contents: read
-# Superseded PR checks can stop; main CI must finish to trigger image releases.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -14,56 +18,82 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
     outputs:
-      images: ${{ steps.select.outputs.images }}
+      targets: ${{ steps.select.outputs.targets }}
+      javascript: ${{ steps.select.outputs.javascript }}
+      rust: ${{ steps.select.outputs.rust }}
+      previous-images: ${{ steps.select.outputs.previous-images }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - run: node --test tools/images/*.test.mjs
       - id: select
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" || -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
-            echo 'images=true' >> "$GITHUB_OUTPUT"
-          else
-            selection=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | node tools/images/image-targets.mjs)
-            echo "images=$(jq -r '.deploy' <<<"$selection")" >> "$GITHUB_OUTPUT"
+          base=$PR_BASE
+          previous='{}'
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            # A failed or skipped build has no application artifact. Diff against a
+            # published ancestor so its pending changes are included in the retry.
+            candidates=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=application&per_page=100" \
+              --jq '.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main") | [.workflow_run.id, .workflow_run.head_sha] | @tsv')
+            while IFS=$'\t' read -r run sha; do
+              if [[ -z "$run" || "$sha" == "$GITHUB_SHA" ]] || ! git merge-base --is-ancestor "$sha" "$GITHUB_SHA" 2>/dev/null; then
+                continue
+              fi
+              if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" |
+                jq -e '.path == ".github/workflows/ci.yml" and .conclusion == "success"
+                  and (.event == "push" or .event == "workflow_dispatch")' >/dev/null; then
+                continue
+              fi
+              if gh run download "$run" --repo "$GITHUB_REPOSITORY" --name application --dir "$RUNNER_TEMP/baseline" &&
+                previous=$(jq -ce --arg sha "$sha" --arg repo "$GITHUB_REPOSITORY" \
+                  'select(.schemaVersion == 1 and .repository == $repo and .sourceSha == $sha
+                    and (.images | keys) == ["ai","auth","bbs","bbs-web","platform"]) | .images' \
+                  "$RUNNER_TEMP/baseline/application.json"); then
+                base=$sha
+              else
+                previous='{}'
+              fi
+              break
+            done <<< "$candidates"
           fi
 
+          if [[ -n "$base" ]] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            selection=$(git diff --no-renames --name-only "$base" "$GITHUB_SHA" | node tools/images/image-targets.mjs)
+          else
+            selection=$(node tools/images/image-targets.mjs --all)
+          fi
+          {
+            echo "targets=$(jq -c '.targets' <<< "$selection")"
+            echo "javascript=$(jq -r '.javascript' <<< "$selection")"
+            echo "rust=$(jq -r '.rust | join(" ")' <<< "$selection")"
+            echo "previous-images=$previous"
+          } >> "$GITHUB_OUTPUT"
+
   images:
-    needs: [changes, ready, bbs-rust, bbs-container, secrets]
-    if: needs.changes.outputs.images == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: [changes, ready, rust, secrets]
+    if: >-
+      !cancelled() && needs.changes.result == 'success' && needs.secrets.result == 'success' &&
+      (needs.ready.result == 'success' || needs.ready.result == 'skipped') &&
+      (needs.rust.result == 'success' || needs.rust.result == 'skipped') &&
+      needs.changes.outputs.targets != '[]' && github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' && !inputs.parity
     permissions:
       actions: read
       contents: read
       packages: write
     uses: ./.github/workflows/image-build.yml
-
-  manifest:
-    needs: [images, ready, bbs-rust, bbs-container, secrets]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: image-updates
-          path: image-updates
-      - name: Assemble tested application manifest
-        env:
-          BUILD_SHA: ${{ github.sha }}
-        run: |
-          jq -s --arg source "$BUILD_SHA" --arg repository "$GITHUB_REPOSITORY" \
-            '{schemaVersion: 1, repository: $repository, sourceSha: $source,
-              images: (map({key: .target, value: .image}) | from_entries)}' \
-            image-updates/*.json > application.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: application
-          path: application.json
-          if-no-files-found: error
+    with:
+      targets: ${{ needs.changes.outputs.targets }}
+      previous-images: ${{ needs.changes.outputs.previous-images }}
 
   secrets:
     runs-on: ubuntu-latest
@@ -84,8 +114,10 @@ jobs:
         run: '"$RUNNER_TEMP/gitleaks" git --redact --log-opts="--all"'
 
   ready:
+    needs: changes
+    if: needs.changes.outputs.javascript == 'true' && !inputs.parity
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -93,40 +125,46 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: package.json
-      - name: Install the locked workspace toolchain
+      - name: Install the locked package manager
+        id: pnpm
         run: |
           npm install --global "pnpm@$(node -p 'require("./package.json").devEngines.packageManager.version')"
-          pnpm install --frozen-lockfile
-      - name: Install protobuf compiler
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-      # check + every package's tests (PGlite, fake GitHub: no services) + every build.
-      - run: pnpm exec vp run ready
-      - run: sh tools/images/caddy.test.sh
+          echo "store=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.pnpm.outputs.store }}
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package.json', 'pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vp run -r build
+      - run: pnpm exec vp check
+      - run: pnpm exec vp run -r test
 
-  bbs-container:
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust != '' && !inputs.parity
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Build BBS web and preparation images
-        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          source: .
-          files: tools/images/docker-bake.hcl
-          targets: bbs,bbs-web
-          load: true
-          set: |
-            bbs.tags=herkules-bbs-jobs:test
-            bbs-web.tags=herkules-bbs-web:test
-      - name: Verify Rust-only runtime against disposable Postgres
-        run: sh tools/images/bbs-web.test.sh
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --all --check
+      - name: Lint and test affected packages
+        env:
+          PACKAGES: ${{ needs.changes.outputs.rust }}
+        run: |
+          args=()
+          for package in $PACKAGES; do args+=(-p "$package"); done
+          cargo clippy --all-targets --locked "${args[@]}" -- -D warnings
+          cargo test --locked "${args[@]}"
 
   bbs-rust:
+    if: github.event_name == 'workflow_dispatch' && inputs.parity
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:

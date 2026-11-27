@@ -12,6 +12,9 @@ test("shared UI affects every browser image", () => {
 test("application routes travel with the platform artifact", () => {
   assert.deepEqual(selectImageTargets(["tools/images/caddy/mcp/bbs.caddy"]).targets, ["platform"]);
 });
+test("public Markdown files are image inputs", () => {
+  assert.deepEqual(selectImageTargets(["services/web/public/help.md"]).targets, ["platform"]);
+});
 test("documentation and infrastructure do not build application images", () => {
   assert.deepEqual(selectImageTargets(["README.md", "tools/deploy/Caddyfile"]).targets, []);
 });
@@ -52,19 +55,45 @@ test("local training changes do not trigger application images", () => {
   assert.deepEqual(selectImageTargets(["apps/training/README.md"]).targets, []);
 });
 
-test("Rust workspace changes rebuild both Rust runtimes", () => {
+test("shared Rust inputs rebuild both Rust runtimes", () => {
   for (const path of [
     "Cargo.toml",
     "Cargo.lock",
-    "apps/bbs/rust/src/http.rs",
     "packages/auth-rust/src/session.rs",
-    "packages/feishu-rust/src/lib.rs",
     "services/ai/Cargo.toml",
-    "services/ai/src/api.rs",
-    "services/ai/migrations/0001_init.sql",
   ]) {
     assert.deepEqual(selectImageTargets([path]).targets, ["bbs", "bbs-web", "ai"]);
   }
+});
+
+test("AI Rust changes build AI and run only its Rust checks", () => {
+  for (const path of ["services/ai/src/api.rs", "services/ai/migrations/0001_init.sql"]) {
+    assert.deepEqual(selectImageTargets([path]), {
+      targets: ["ai"],
+      deploy: true,
+      javascript: false,
+      rust: ["herkules-ai"],
+    });
+  }
+});
+
+test("BBS native and Feishu transport changes keep the BBS images paired", () => {
+  assert.deepEqual(selectImageTargets(["apps/bbs/rust/src/http.rs"]).targets, ["bbs", "bbs-web"]);
+  assert.deepEqual(selectImageTargets(["packages/feishu-rust/src/lib.rs"]), {
+    targets: ["bbs", "bbs-web"],
+    deploy: true,
+    javascript: false,
+    rust: ["herkules-bbs", "herkules-feishu"],
+  });
+});
+
+test("contract vectors run both language checks without publishing images", () => {
+  assert.deepEqual(selectImageTargets(["docs/tokens-vectors.json"]), {
+    targets: [],
+    deploy: false,
+    javascript: true,
+    rust: ["herkules-auth"],
+  });
 });
 
 test("portal changes rebuild only the AI image", () => {

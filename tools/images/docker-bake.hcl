@@ -29,7 +29,6 @@ target "image" {
   target     = image
   platforms  = ["linux/amd64"]
   tags = [
-    "ghcr.io/${REPOSITORY}/${image}:latest",
     "ghcr.io/${REPOSITORY}/${image}:sha-${SHORT_SHA}",
   ]
   cache-from = [for scope in ["auth", "bbs", "bbs-web", "ai", "platform"] : "type=gha,scope=${scope}"]

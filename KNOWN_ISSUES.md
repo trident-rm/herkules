@@ -356,20 +356,6 @@ Entries referencing `tools/deploy` now belong to the private `herkules-infra`
 repository. They are retained here as the historical review record, not a claim
 that these files still live in the application checkout.
 
-### 34. `apply-release.sh` reports a failed rollback as a successful one
-
-- **Where**: `tools/deploy/apply-release.sh:139` (`restore_previous`), `:52` (`finish`)
-- **Confidence**: confirmed
-- **What**: every recovery step is error-suppressed (`compose pull --quiet || true` at
-  `:154`, `compose up … || true` at `:155`, `--force-recreate … || true` at `:159`) and
-  `finish` exits with the _original_ failure status. Nothing re-checks the restored
-  release. A restore that itself fails leaves production on the broken stack while the
-  log, the exit code, and the GitHub status all read as a clean rollback — the worst-case
-  deploy failure is the one a human must notice.
-- **Fix**: accumulate failures in `restore_previous`, print an explicit "restore FAILED:
-  production is on the failed release", and exit with a distinct code (3) when it fails;
-  re-run the public `curl` probes after a successful restore as positive proof.
-
 ### 35. Archive-safety guards become no-ops when `tar` fails
 
 - **Where**: `tools/deploy/apply-release.sh:75`, `:79` (`set -eu`, POSIX `sh`, no
