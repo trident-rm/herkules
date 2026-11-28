@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 
 use crate::{
     App,
-    backends::{Entry, Inflight, Pick},
+    backends::{Inflight, Pick},
     db::{self, KeyOwner, NewBodies, NewRequest},
     keys, levels,
     usage::{self, Meter, Stats},
@@ -128,9 +128,14 @@ pub async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 .and_then(|v| v["model"].as_str().map(str::to_owned))
                 // Tokenizer routes may leave the model out; with one model there is no doubt.
                 .or_else(|| {
-                    (models.len() == 1)
-                        .then(|| models.first().cloned())
-                        .flatten()
+                    let enabled = app.backends.enabled_models();
+                    if models.len() == 1 {
+                        models.first().cloned()
+                    } else if enabled.len() == 1 {
+                        enabled.first().cloned()
+                    } else {
+                        None
+                    }
                 });
             let level = app.levels.get().level(&owner.sub, model.as_deref());
             let record = Record {
@@ -142,6 +147,7 @@ pub async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 route: path.clone(),
                 model: model.clone(),
                 backend: None,
+                admitted_inflight: None,
                 effort: request_json.as_ref().and_then(usage::effort),
                 level,
                 request: (level == levels::FULL).then(|| bytes.clone()),
@@ -214,32 +220,8 @@ async fn forward(
         record.finish(Outcome::refused(400));
         return error(&path, StatusCode::BAD_REQUEST, "model is required");
     };
-    let entry: Arc<Entry> = match app.backends.pick(&model) {
-        Pick::Backend(entry) => entry,
-        Pick::Unknown => {
-            record.finish(Outcome::refused(404));
-            return error(
-                &path,
-                StatusCode::NOT_FOUND,
-                &format!("model {model:?} is not served here"),
-            );
-        }
-        Pick::Unavailable => {
-            record.finish(Outcome::refused(503));
-            return error(
-                &path,
-                StatusCode::SERVICE_UNAVAILABLE,
-                &format!("no backend for {model:?} is available"),
-            );
-        }
-    };
-    record.backend = Some(entry.backend.name.clone());
-    let inflight = Inflight::new(Arc::clone(&entry));
-    let target = format!(
-        "{}{}",
-        entry.backend.url,
-        uri.path_and_query().map_or(path.as_str(), |p| p.as_str())
-    );
+    let wait = std::time::Duration::from_secs(u64::from(app.backends.routing().wait_seconds));
+    let deadline = tokio::time::Instant::now() + wait;
     let mut headers = request_headers(client_headers);
     // Without this the HTTP client may ask for gzip itself, and the log would hold
     // compressed bytes.
@@ -247,23 +229,65 @@ async fn forward(
         header::ACCEPT_ENCODING,
         HeaderValue::from_static("identity"),
     );
-    entry.backend.credential.apply(&mut headers);
-    let upstream = match app
-        .http
-        .request(method, target)
-        .headers(headers)
-        .body(body)
-        .send()
-        .await
-    {
-        Ok(upstream) => upstream,
-        Err(e) => {
-            tracing::warn!(backend = %entry.backend.name, "upstream: {}", e.without_url());
-            record.finish(Outcome {
-                error: Some("the backend did not answer".into()),
-                ..Outcome::refused(502)
-            });
-            return error(&path, StatusCode::BAD_GATEWAY, "the backend did not answer");
+    let suffix = uri.path_and_query().map_or(path.as_str(), |p| p.as_str());
+    let (upstream, inflight) = loop {
+        let inflight = match app.backends.acquire(&model, deadline).await {
+            Pick::Backend(inflight) => inflight,
+            Pick::Unknown => {
+                record.finish(Outcome::refused(404));
+                return error(
+                    &path,
+                    StatusCode::NOT_FOUND,
+                    &format!("model {model:?} is not served here"),
+                );
+            }
+            Pick::Unavailable => {
+                record.finish(Outcome {
+                    error: Some("no backend became available before the routing deadline".into()),
+                    ..Outcome::refused(503)
+                });
+                return error(
+                    &path,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    &format!(
+                        "no backend for {model:?} became available before the routing deadline"
+                    ),
+                );
+            }
+        };
+        let entry = &inflight.entry;
+        record.backend = Some(entry.backend.name.clone());
+        record.admitted_inflight = Some(inflight.admitted_inflight);
+        let target = format!("{}{suffix}", entry.backend.url);
+        let mut upstream_headers = headers.clone();
+        entry.backend.credential.apply(&mut upstream_headers);
+        let sent_at = Utc::now();
+        match app
+            .http
+            .request(method.clone(), target)
+            .headers(upstream_headers)
+            .body(body.clone())
+            .send()
+            .await
+        {
+            Ok(upstream) => break (upstream, inflight),
+            Err(e) => {
+                let connect = e.is_connect();
+                tracing::warn!(backend = %entry.backend.name, "upstream: {}", e.without_url());
+                // A connection error occurs before the request reaches the backend.
+                // Leave failures after a connection is made to the caller.
+                if connect {
+                    app.backends.connection_failed(entry, sent_at);
+                    if tokio::time::Instant::now() < deadline {
+                        continue;
+                    }
+                }
+                record.finish(Outcome {
+                    error: Some("the backend did not answer".into()),
+                    ..Outcome::refused(502)
+                });
+                return error(&path, StatusCode::BAD_GATEWAY, "the backend did not answer");
+            }
         }
     };
     let status = upstream.status();
@@ -386,6 +410,7 @@ pub struct Record {
     route: String,
     model: Option<String>,
     backend: Option<String>,
+    admitted_inflight: Option<i32>,
     effort: Option<String>,
     level: &'static str,
     request: Option<Bytes>,
@@ -412,6 +437,7 @@ impl Record {
             key_id: self.owner.id,
             model: self.model.take(),
             backend: self.backend.take(),
+            admitted_inflight: self.admitted_inflight,
             method: std::mem::take(&mut self.method),
             route: std::mem::take(&mut self.route),
             status: i32::from(status),

@@ -1,13 +1,16 @@
 //! Every query the gateway runs against its own database.
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{
     FromRow, PgPool, Postgres, QueryBuilder,
     postgres::{PgPoolOptions, PgRow},
 };
 
-use crate::{backends::State, usage::Stats};
+use crate::{
+    backends::{BackendPolicy, Backends, Routing, State, Strategy},
+    usage::Stats,
+};
 
 pub async fn connect(url: &str, connections: u32) -> Result<PgPool, sqlx::Error> {
     let pool = PgPoolOptions::new()
@@ -161,7 +164,68 @@ pub async fn delete_tunnel_backend(db: &PgPool, name: &str) -> sqlx::Result<()> 
         .bind(name)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("delete from backend_routing where name = $1")
+        .bind(name)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await
+}
+
+pub async fn load_routing(db: &PgPool, backends: &Backends) -> sqlx::Result<()> {
+    if let Some((strategy, wait_seconds)) =
+        sqlx::query_as::<_, (String, i32)>("select strategy, wait_seconds from routing_settings")
+            .fetch_optional(db)
+            .await?
+    {
+        backends.set_routing(Routing {
+            strategy: Strategy::parse(&strategy),
+            wait_seconds: u32::try_from(wait_seconds).unwrap_or_default(),
+        });
+    }
+    let policies = sqlx::query_as::<_, (String, i32, Option<i32>)>(
+        "select name, priority, max_streams from backend_routing",
+    )
+    .fetch_all(db)
+    .await?;
+    for (name, priority, max_streams) in policies {
+        backends.set_policy(
+            name,
+            BackendPolicy {
+                priority: u16::try_from(priority).unwrap_or_default(),
+                max_streams: max_streams.and_then(|value| u16::try_from(value).ok()),
+            },
+        );
+    }
+    Ok(())
+}
+
+pub async fn save_routing(db: &PgPool, routing: Routing) -> sqlx::Result<()> {
+    sqlx::query(
+        "insert into routing_settings (strategy, wait_seconds) values ($1, $2)
+         on conflict (singleton) do update set strategy = $1, wait_seconds = $2",
+    )
+    .bind(routing.strategy.as_str())
+    .bind(i32::try_from(routing.wait_seconds).unwrap_or(i32::MAX))
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn save_backend_policy(
+    db: &PgPool,
+    name: &str,
+    policy: BackendPolicy,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "insert into backend_routing (name, priority, max_streams) values ($1, $2, $3)
+         on conflict (name) do update set priority = $2, max_streams = $3",
+    )
+    .bind(name)
+    .bind(i32::from(policy.priority))
+    .bind(policy.max_streams.map(i32::from))
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 pub async fn backend_states(db: &PgPool) -> sqlx::Result<Vec<(String, String)>> {
@@ -220,6 +284,79 @@ pub async fn set_log_level(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum BodyRetention {
+    Default,
+    Days { days: i32 },
+    Forever,
+}
+
+pub async fn body_retention(db: &PgPool) -> sqlx::Result<Vec<(String, BodyRetention)>> {
+    let rows: Vec<(String, Option<i32>)> =
+        sqlx::query_as("select model, days from log_body_retention")
+            .fetch_all(db)
+            .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(model, days)| {
+            (
+                model,
+                days.map_or(BodyRetention::Forever, |days| BodyRetention::Days { days }),
+            )
+        })
+        .collect())
+}
+
+pub async fn set_body_retention(
+    db: &PgPool,
+    model: &str,
+    retention: BodyRetention,
+    by: &str,
+) -> sqlx::Result<()> {
+    let days = match retention {
+        BodyRetention::Default => {
+            sqlx::query("delete from log_body_retention where model = $1")
+                .bind(model)
+                .execute(db)
+                .await?;
+            return Ok(());
+        }
+        BodyRetention::Days { days } => Some(days),
+        BodyRetention::Forever => None,
+    };
+    sqlx::query(
+        "insert into log_body_retention (model, days, updated_by) values ($1, $2, $3)
+         on conflict (model) do update set days = $2, updated_by = $3, updated_at = now()",
+    )
+    .bind(model)
+    .bind(days)
+    .bind(by)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct LogStorage {
+    pub request_records: i64,
+    pub body_records: i64,
+    pub request_disk_bytes: i64,
+    pub body_disk_bytes: i64,
+}
+
+pub async fn log_storage(db: &PgPool) -> sqlx::Result<LogStorage> {
+    sqlx::query_as(
+        "select (select count(*) from requests) as request_records,
+                (select count(*) from request_bodies) as body_records,
+                pg_total_relation_size('requests') as request_disk_bytes,
+                pg_total_relation_size('request_bodies') as body_disk_bytes",
+    )
+    .fetch_one(db)
+    .await
+}
+
 /// A finished request, ready to write.
 pub struct NewRequest {
     pub at: DateTime<Utc>,
@@ -237,6 +374,7 @@ pub struct NewRequest {
     pub error: Option<String>,
     pub stats: Stats,
     pub level: &'static str,
+    pub admitted_inflight: Option<i32>,
 }
 
 pub struct NewBodies {
@@ -257,9 +395,9 @@ pub async fn insert_request(
     let (id,): (i64,) = sqlx::query_as(
         "insert into requests (at, sub, key_id, model, backend, method, route, status, duration_ms,
            streamed, cancelled, effort, prompt_tokens, cached_tokens, output_tokens, ttft_ms,
-           decode_tps, tokens_per_round, level, error)
+           decode_tps, tokens_per_round, level, error, admitted_inflight)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
-           $20)
+           $20, $21)
          returning id",
     )
     .bind(row.at)
@@ -282,6 +420,7 @@ pub async fn insert_request(
     .bind(row.stats.tokens_per_round)
     .bind(row.level)
     .bind(&row.error)
+    .bind(row.admitted_inflight)
     .fetch_one(&mut *tx)
     .await?;
     if let Some(b) = bodies {
@@ -528,7 +667,7 @@ pub async fn performance(db: &PgPool, hours: i32) -> sqlx::Result<Vec<Performanc
            percentile_cont(0.5) within group (order by tokens_per_round) as tokens_per_round
          from requests
          where at > now() - make_interval(hours => $1) and status < 400 and error is null
-           and output_tokens > 0
+           and not cancelled and output_tokens > 0
          group by 1, 2 order by 1, 2",
     )
     .bind(hours)
@@ -545,13 +684,13 @@ const TOTALS: &str = "count(*) as requests,
    coalesce(sum(r.cached_tokens), 0)::bigint as cached_tokens,
    coalesce(sum(r.output_tokens), 0)::bigint as output_tokens,
    percentile_cont(0.5) within group (order by r.ttft_ms) filter (where r.status < 400
-     and r.error is null and r.output_tokens > 0) as ttft_p50,
+     and r.error is null and not r.cancelled and r.output_tokens > 0) as ttft_p50,
    percentile_cont(0.95) within group (order by r.ttft_ms) filter (where r.status < 400
-     and r.error is null and r.output_tokens > 0) as ttft_p95,
+     and r.error is null and not r.cancelled and r.output_tokens > 0) as ttft_p95,
    percentile_cont(0.5) within group (order by r.decode_tps) filter (where r.status < 400
-     and r.error is null and r.output_tokens > 0) as tps_p50,
+     and r.error is null and not r.cancelled and r.output_tokens > 0) as tps_p50,
    percentile_cont(0.95) within group (order by r.decode_tps) filter (where r.status < 400
-     and r.error is null and r.output_tokens > 0) as tps_p95";
+     and r.error is null and not r.cancelled and r.output_tokens > 0) as tps_p95";
 
 #[derive(Debug, Default, Serialize, FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -611,6 +750,16 @@ pub struct UserTotals {
     pub totals: Totals,
 }
 
+#[derive(Debug, Serialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct DecodeByLoad {
+    pub model: String,
+    pub backend: String,
+    pub admitted_inflight: i32,
+    pub samples: i64,
+    pub tps_p50: f64,
+}
+
 /// Everything the dashboard charts for one time window.
 #[derive(Debug)]
 pub struct Overview {
@@ -619,6 +768,7 @@ pub struct Overview {
     pub series: Vec<Point>,
     pub models: Vec<ModelTotals>,
     pub backends: Vec<BackendTotals>,
+    pub decode_by_load: Vec<DecodeByLoad>,
     pub keys: Vec<KeyTotals>,
     /// The 20 busiest users; filled only when `sub` is `None`.
     pub users: Vec<UserTotals>,
@@ -660,7 +810,7 @@ pub async fn overview(
     );
     qb.push_bind(bucket_start(from, bucket))
         .push(", ")
-        .push_bind(bucket_start(to, bucket))
+        .push_bind(bucket_start(to - chrono::TimeDelta::nanoseconds(1), bucket))
         .push(", make_interval(secs => ")
         .push_bind(bucket as f64)
         .push(")) as b(t) left join agg a on a.t = b.t order by b.t");
@@ -668,6 +818,19 @@ pub async fn overview(
 
     let models = grouped(db, &window, "r.model", "", "r.model", None).await?;
     let backends = grouped(db, &window, "r.backend", "", "r.backend", None).await?;
+    let mut qb = QueryBuilder::new(
+        "select r.model, r.backend, r.admitted_inflight, count(*) as samples,
+           percentile_cont(0.5) within group (order by r.decode_tps) as tps_p50
+         from requests r",
+    );
+    window.push_where(&mut qb);
+    qb.push(
+        " and r.model is not null and r.backend is not null and r.admitted_inflight is not null
+           and r.status < 400 and r.error is null and not r.cancelled and r.output_tokens > 0
+           and r.decode_tps is not null
+         group by 1, 2, 3 order by 1, 2, 3",
+    );
+    let decode_by_load = qb.build_query_as().fetch_all(db).await?;
     let keys = grouped(
         db,
         &window,
@@ -686,6 +849,7 @@ pub async fn overview(
         series,
         models,
         backends,
+        decode_by_load,
         keys,
         users,
     })
@@ -719,11 +883,17 @@ fn bucket_start(t: DateTime<Utc>, secs: i64) -> DateTime<Utc> {
 }
 
 pub async fn purge_bodies(db: &PgPool, days: i32) -> sqlx::Result<u64> {
-    let done =
-        sqlx::query("delete from request_bodies where at < now() - make_interval(days => $1)")
-            .bind(days)
-            .execute(db)
-            .await?;
+    // Bound the scan by the shortest retention before looking up each body's policy.
+    let done = sqlx::query(
+        "delete from request_bodies b
+         using requests r left join log_body_retention p on p.model = r.model
+         where b.request_id = r.id
+           and b.at < now() - make_interval(days => least($1, (select min(days) from log_body_retention)))
+           and b.at < now() - make_interval(days => case when p.model is null then $1 else p.days end)",
+    )
+    .bind(days)
+    .execute(db)
+    .await?;
     Ok(done.rows_affected())
 }
 
@@ -749,6 +919,63 @@ mod tests {
             .to_utc();
         assert_eq!(bucket_start(t, 1_800), want);
         assert_eq!(bucket_start(want, 1_800), want);
+    }
+
+    #[tokio::test]
+    #[ignore = "needs AI_TEST_DATABASE_URL"]
+    async fn body_retention_applies_current_policy_to_existing_bodies() {
+        let url = std::env::var("AI_TEST_DATABASE_URL").expect("AI_TEST_DATABASE_URL is set");
+        let db = connect(&url, 2).await.unwrap();
+        let sub = format!("retention-{}", Utc::now().timestamp_micros());
+        let short = format!("{sub}-short");
+        let training = format!("{sub}-training");
+        let key = create_key(&db, &sub, "test", &sub, "sk-hk-test")
+            .await
+            .unwrap();
+        let ids: Vec<i64> = sqlx::query_scalar(
+            "with inserted as (
+               insert into requests (at, sub, key_id, model, method, route, status, duration_ms,
+                                     streamed, cancelled, level)
+               select now() - make_interval(days => age), $1, $2, model, 'POST', '/v1/messages', 200,
+                      10, false, false, 'full'
+               from (values (1, 40, null), (2, 10, null), (3, 10, $3), (4, 2, $3), (5, 100, $4))
+                 as v(n, age, model)
+               order by n returning id, at
+             )
+             insert into request_bodies (request_id, at, request, request_bytes, request_truncated,
+                                         response, response_bytes, response_truncated)
+             select id, at, ''::bytea, 0, false, ''::bytea, 0, false from inserted
+             order by id returning request_id",
+        )
+        .bind(&sub)
+        .bind(key.id)
+        .bind(&short)
+        .bind(&training)
+        .fetch_all(&db)
+        .await
+        .unwrap();
+
+        set_body_retention(&db, &short, BodyRetention::Days { days: 5 }, &sub)
+            .await
+            .unwrap();
+        set_body_retention(&db, &training, BodyRetention::Forever, &sub)
+            .await
+            .unwrap();
+        purge_bodies(&db, 30).await.unwrap();
+        for (id, kept) in ids.iter().zip([false, true, false, true, true]) {
+            assert_eq!(bodies(&db, *id).await.unwrap().is_some(), kept, "{id}");
+            assert!(request(&db, *id, Some(&sub)).await.unwrap().is_some());
+        }
+
+        let storage = log_storage(&db).await.unwrap();
+        assert!(storage.request_records >= 5 && storage.body_records >= 3);
+        assert!(storage.request_disk_bytes > 0 && storage.body_disk_bytes > 0);
+
+        set_body_retention(&db, &training, BodyRetention::Default, &sub)
+            .await
+            .unwrap();
+        purge_bodies(&db, 30).await.unwrap();
+        assert!(bodies(&db, ids[4]).await.unwrap().is_none());
     }
 
     #[test]
@@ -824,9 +1051,10 @@ mod tests {
         let ids: Vec<i64> = sqlx::query_scalar(
             "insert into requests (at, sub, key_id, model, status, cancelled, error,
                output_tokens, ttft_ms, decode_tps, backend, method, route, duration_ms, streamed,
-               prompt_tokens, level)
+               prompt_tokens, level, admitted_inflight)
              select now() - make_interval(mins => m), s, k, model, status, c, e, o, ttft, tps,
-               'gpu-a', 'POST', '/v1/chat/completions', 10, true, o, 'metadata'
+               'gpu-a', 'POST', '/v1/chat/completions', 10, true, o, 'metadata',
+               case n when 2 then 2 when 6 then null else 1 end
              from (values
                (1, 10, $1, $3, 'm1', 200, false, null, 10, 100.0, 50.0),
                (2, 120, $1, $3, 'm1', 200, false, null, 20, 200.0, 30.0),
@@ -936,6 +1164,20 @@ mod tests {
         assert_eq!(day.models[0].model.as_deref(), Some("m1"));
         assert_eq!(day.keys.len(), 2);
         assert!(day.users.is_empty());
+        let history = overview(&db, Some(&a), now - TimeDelta::days(60), now, 86_400)
+            .await
+            .unwrap();
+        let cohorts: Vec<_> = history
+            .decode_by_load
+            .iter()
+            .map(|row| (row.admitted_inflight, row.samples, row.tps_p50))
+            .collect();
+        assert_eq!(cohorts, [(1, 1, 50.0), (2, 1, 30.0)]);
+        let end = bucket_start(now, 60);
+        let aligned = overview(&db, Some(&a), end - TimeDelta::minutes(1), end, 60)
+            .await
+            .unwrap();
+        assert_eq!(aligned.series.len(), 1);
         let hour = overview(&db, None, minutes(60), now, 60).await.unwrap();
         assert_eq!(hour.series.len(), 61);
         assert!(hour.users.iter().any(|u| u.sub == b) && hour.users.iter().any(|u| u.sub == a));

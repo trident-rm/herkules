@@ -57,9 +57,32 @@ A backend is a model server: a name, a base URL, the model ids it serves, and a 
 
 - **Tunnel backends**: an admin adds a machine in the portal with a name, its model ids and the local port of `siphon-serve`. See [Tunnel backends](#tunnel-backends).
 
-Every 5 seconds the gateway reads each backend's `/health`, `/metrics` (`vllm:num_requests_running` and `vllm:num_requests_waiting`) and `/v1/models`, sending the backend's credential. A backend is healthy when `/health` answers 2xx. A request goes to an enabled, healthy backend that lists its model, with the lowest load. Load is the larger of the gateway's open requests to that backend and its reported running count, plus its waiting count.
+The gateway polls `/health`, `/metrics` and `/v1/models` every 5 seconds using the backend's credential. A backend is healthy when `/health` returns 2xx. Browsing models requires an enabled and healthy backend.
 
-Admins set each backend to enabled, disabled or draining. The state lives in `backend_state` and survives restarts. Disabled and draining backends get no new requests; open requests finish. The portal shows open requests per backend, so an admin can tell when a draining backend is idle.
+Admins configure routing in the Backends page. Routing selects independently for each requested model and persists across restarts.
+
+- **Least loaded** uses the lowest load among available backends in the highest priority tier. Load is the larger of gateway open requests and reported running requests, plus reported waiting requests.
+- **Round robin** rotates through available backends in the highest priority tier.
+- **One server per model** uses the first healthy backend by priority and name. If it is full, requests wait for that backend. If it loses health, the next healthy backend takes over.
+
+Priority defaults to 0, and lower numbers take precedence. A per-backend stream limit overrides the capacity advertised by the engine, when present. Admission counts all open requests to the backend, or the engine's running plus waiting count if that is larger. Admins can enable, disable or drain a backend. Disabled and draining backends admit no new requests. Open requests finish.
+
+When a known model has no available backend, requests can wait for a health update or an open slot. The routing wait defaults to 30 seconds and accepts 0–60 seconds. A connection failure before sending can try admission again within that window. The wait covers admission and stays separate from upstream timeouts.
+
+### Siphon metrics
+
+The portal shows running and waiting requests from the vLLM gauges. Live input and output throughput are the differences between consecutive scrapes of `vllm:prompt_tokens_total` and `vllm:generation_tokens_total`, divided by elapsed time. Siphon counts the full prompt when the first output token arrives, including cached tokens. Older servers can omit the following optional metrics.
+
+| Metric                           | Type    | What Siphon should report                                                                      |
+| -------------------------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `siphon:max_concurrent_streams`  | Gauge   | Total scheduler capacity for the server as a single positive integer, across model IDs         |
+| `siphon:num_requests_prefilling` | Gauge   | Active requests currently in prefill                                                           |
+| `siphon:num_requests_decoding`   | Gauge   | Active requests currently decoding                                                             |
+| `siphon:prefill_tokens_total`    | Counter | Newly computed input tokens, excluding prefix-cache hits, counted as the engine processes them |
+
+Siphon also reports parked requests, KV pool pages, speculative tokens and fallback steps, prefix-cache reuse and restore time by tier, and admission rejections by reason. Expand **Scheduler details** on a live backend to see these metrics. The decode table divides the change in `siphon:decode_tokens_total` by the change in `siphon:decode_seconds_total` for each `streams` label. This is aggregate throughput during decode steps at that occupancy. The portal drops interval deltas when `process_start_time_seconds` changes.
+
+The historical Overview still groups completed requests by gateway concurrency at admission. The engine's occupancy counters describe only the latest live scrape interval.
 
 ## Tunnel backends
 
@@ -98,15 +121,17 @@ The Cloudflare API token needs exactly:
 
 ## Request log
 
-Each forwarded request writes one `requests` row: time, user, key, model, backend, method, route, status, duration, whether it streamed, whether the client cancelled, an error message if the body or the gateway reported one, reasoning effort, prompt tokens (the whole prompt, cached tokens included), cached tokens, output tokens, TTFT, decode tok/s, tokens per round, and its logging level. A request refused before forwarding, for a missing or unknown key or a disallowed route, writes no row.
+Each forwarded request writes one `requests` row: time, user, key, model, backend, method, route, status, duration, whether it streamed, whether the client cancelled, an error message if the body or the gateway reported one, reasoning effort, prompt tokens (the whole prompt, cached tokens included), cached tokens, output tokens, TTFT, decode tok/s, tokens per round, and its logging level. Requests with a missing or unknown key or a disallowed route write no row. Routing timeouts for authenticated requests are logged as 503.
 
 Token counts and speeds come from Siphon's llama.cpp-style `timings`: at the top level of a plain body, or in a stream's late event. When a response has no `timings`, they come from `usage` in OpenAI's, Anthropic's or the Responses API's shape. The effort comes from `reasoning_effort`, `reasoning.effort` or `output_config.effort`; `thinking: {"type": "disabled"}` records `none`. A client that leaves before the response begins is logged with status 499.
 
 ### Logging levels
 
-A request is logged at `metadata` or `full`. `full` also stores the request and response bodies in `request_bodies`, zstd-compressed. Each body is cut at `AI_LOG_BODY_BYTES` before compression, and the row records the original size and whether it was cut. Stored bodies are deleted after `AI_LOG_RETENTION_DAYS`; the metadata rows stay.
+A request is logged at `metadata` or `full`. `full` also stores the request and response bodies in `request_bodies`, zstd-compressed. Each body is cut at `AI_LOG_BODY_BYTES` before compression, and the row records the original size and whether it was cut.
 
 The level is the owner's override if an admin set one, else the model's default if set, else `metadata`. The portal shows each member their level. Members can read their own stored bodies, and admins can read anyone's.
+
+In the Logging panel, admins set each model to inherit `AI_LOG_RETENTION_DAYS`, expire stored bodies after a custom number of days, or keep bodies for training until the policy changes. The current policy applies to existing and future bodies. Set the model's capture level to `full` to store bodies by default for that model. Cleanup runs at startup and hourly thereafter. Request metadata stays after body cleanup. The panel shows the next cleanup time, the number of request records and stored body pairs, and disk space allocated to their PostgreSQL tables, including indexes and TOAST storage.
 
 ### Reading the log
 
@@ -114,7 +139,7 @@ Members read only their own rows. Admins read their own by default, everyone's w
 
 - `GET /api/requests`: newest first, at most `limit` (50, up to 200). Paging uses `before=<id>`, and a live tail uses `after=<id>`. Filters, all combined: `q` (a case-insensitive substring of model, backend, route, error, effort or key name, or the row id), `model`, `backend`, `route`, `key` (a key id), `status` (`ok`, `error` or `cancelled`), and `from` and `to` (RFC 3339, from inclusive, to exclusive).
 - `GET /api/requests/{id}`: one row. `GET /api/requests/{id}/body`: its stored bodies.
-- `GET /api/stats?range=1h|24h|7d|30d`: totals, a time series and breakdowns by model, backend, key and, for an admin reading everyone's rows, the 20 busiest users, plus the 10 newest errors. Buckets are 1 minute, 30 minutes, 3 hours or 12 hours, aligned to the Unix epoch, and empty buckets are included.
+- `GET /api/stats?range=1h|24h|7d|30d` or `GET /api/stats?from=<RFC3339>&to=<RFC3339>`: totals, time series, breakdowns by model, backend and key, and decode medians by gateway requests in flight at admission. For an admin reading everyone’s rows, the response includes the 20 busiest users and the 10 newest errors. Buckets align to the Unix epoch and include empty buckets.
 - `GET /api/keys`: each key with its requests and tokens over the last 30 days.
 
 A request counts as cancelled when the client left, as an error when it has status 400 or above or an error message and was not cancelled, and as OK otherwise. TTFT and tok/s percentiles cover successful generations only: status below 400, no error, and at least one output token.
@@ -145,7 +170,7 @@ The SPA in `web/` is a React app on TanStack Router and Query. Pages: Overview (
 | `WEB_DIR`                           | unset            | The built portal. The image sets `/app/dist/client`.                                         |
 | `AI_MAX_REQUEST_BYTES`              | 67108864         | Largest request body, images included.                                                       |
 | `AI_LOG_BODY_BYTES`                 | 1048576          | Bytes of each body kept at the `full` level.                                                 |
-| `AI_LOG_RETENTION_DAYS`             | 30               | Days to keep stored bodies.                                                                  |
+| `AI_LOG_RETENTION_DAYS`             | 30               | Default number of days to keep stored bodies. Models can override it in the portal.          |
 | `AI_UPSTREAM_IDLE_SECS`             | 90               | Seconds a backend response may send nothing before it fails.                                 |
 | `AI_DB_CONNECTIONS`                 | 5                | Postgres pool size.                                                                          |
 

@@ -39,7 +39,9 @@ pub struct App {
     pub http: reqwest::Client,
     pub membership: Membership,
     pub backends: Backends,
+    pub backend_admin: tokio::sync::Mutex<()>,
     pub levels: Levels,
+    pub next_body_cleanup: std::sync::RwLock<Option<chrono::DateTime<chrono::Utc>>>,
     pub cloudflare: Option<Cloudflare>,
 }
 
@@ -94,53 +96,64 @@ pub async fn reload_backends(app: &App) -> sqlx::Result<()> {
     Ok(())
 }
 
-/// Checks every backend each [`backends::POLL`], and tunnel status from Cloudflare.
+/// Refreshes health and metrics independently of Cloudflare's tunnel status.
 async fn poll(app: Arc<App>) {
     let mut tick = tokio::time::interval(backends::POLL);
-    let mut round: u64 = 0;
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tick.tick().await;
-        let entries = app.backends.all();
-        let checks = entries
-            .iter()
-            .map(|e| backends::check(&app.http, &e.backend));
-        let results = futures_util::future::join_all(checks).await;
-        // Tunnel status changes slowly; ask Cloudflare every sixth round (30 s).
-        let tunnels = round.is_multiple_of(6);
-        for (entry, mut live) in entries.iter().zip(results) {
-            let previous = entry.live();
-            live.tunnel = previous.tunnel.clone();
-            if tunnels
-                && let (Some(cf), Source::Tunnel { tunnel_id, .. }) =
-                    (app.cloudflare.as_ref(), &entry.backend.source)
-            {
-                live.tunnel = match cf.tunnel(tunnel_id).await {
-                    Ok(t) => t.status,
-                    Err(e) => {
-                        tracing::warn!(backend = %entry.backend.name, "tunnel status: {e}");
-                        Some("unknown".into())
-                    }
-                };
+        futures_util::future::join_all(app.backends.all().into_iter().map(|entry| {
+            let app = &app;
+            async move {
+                let live = backends::check(&app.http, &entry.backend).await;
+                if entry.live.lock().unwrap().healthy != live.healthy {
+                    tracing::info!(backend = %entry.backend.name, healthy = live.healthy, error = ?live.error, "backend health");
+                }
+                app.backends.update_live(&entry, live);
             }
-            if previous.healthy != live.healthy {
-                tracing::info!(backend = %entry.backend.name, healthy = live.healthy, error = ?live.error, "backend health");
-            }
-            *entry.live.lock().unwrap() = live;
-        }
-        round += 1;
+        })).await;
     }
 }
 
-/// Deletes stored bodies past the retention period, hourly.
+async fn poll_tunnels(app: Arc<App>) {
+    let Some(cf) = app.cloudflare.as_ref() else {
+        return;
+    };
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tick.tick().await;
+        futures_util::future::join_all(app.backends.all().into_iter().map(|entry| async move {
+            let Source::Tunnel { tunnel_id, .. } = &entry.backend.source else {
+                return;
+            };
+            let status = match cf.tunnel(tunnel_id).await {
+                Ok(t) => t.status,
+                Err(e) => {
+                    tracing::warn!(backend = %entry.backend.name, "tunnel status: {e}");
+                    Some("unknown".into())
+                }
+            };
+            entry.live.lock().unwrap().tunnel = status;
+        }))
+        .await;
+    }
+}
+
+/// Deletes expired bodies on startup and hourly thereafter.
 async fn purge(app: Arc<App>) {
     let mut tick = tokio::time::interval(Duration::from_secs(3600));
     loop {
-        tick.tick().await;
+        let scheduled = tick.tick().await;
+        *app.next_body_cleanup.write().unwrap() = None;
         match db::purge_bodies(&app.db, app.config.log_retention_days).await {
             Ok(0) => {}
             Ok(n) => tracing::info!("deleted {n} stored bodies past retention"),
             Err(e) => tracing::error!("body retention: {e}"),
         }
+        let until_next =
+            (scheduled + tick.period()).saturating_duration_since(tokio::time::Instant::now());
+        *app.next_body_cleanup.write().unwrap() = Some(chrono::Utc::now() + until_next);
     }
 }
 
@@ -203,7 +216,9 @@ async fn run() -> Result<(), String> {
             .clone()
             .map(|c| Cloudflare::new(http.clone(), c)),
         backends: Backends::default(),
+        backend_admin: tokio::sync::Mutex::new(()),
         levels: Levels::default(),
+        next_body_cleanup: std::sync::RwLock::default(),
         config,
         db,
         auth,
@@ -217,7 +232,11 @@ async fn run() -> Result<(), String> {
             .await
             .map_err(|e| format!("logging levels: {e}"))?,
     );
+    db::load_routing(&app.db, &app.backends)
+        .await
+        .map_err(|e| format!("backend routing: {e}"))?;
     tokio::spawn(poll(Arc::clone(&app)));
+    tokio::spawn(poll_tunnels(Arc::clone(&app)));
     tokio::spawn(purge(Arc::clone(&app)));
     let api = Router::new()
         .fallback(api::handle)

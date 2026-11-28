@@ -21,7 +21,7 @@ import type { LogsSearch } from "../routes.tsx";
 import { ScopeSwitch } from "../scope.tsx";
 import { RANGES, toScope, useMe } from "../session.ts";
 import { ErrorText, Muted, PageHeader, Segmented, StatusPill } from "../ui.tsx";
-import { usePerformance } from "./Models.tsx";
+import { useLiveBackends } from "./Models.tsx";
 
 const PAGE = 100;
 const RANGE_MS: Record<Range, number> = {
@@ -128,7 +128,7 @@ function Filters({
   keysVisible: boolean;
 }) {
   const me = useMe();
-  const perf = usePerformance();
+  const live = useLiveBackends();
   const keys = useQuery({ queryKey: ["keys"], queryFn: api.keys, enabled: keysVisible });
   const [q, setQ] = useState(search.q ?? "");
   useEffect(() => setQ(search.q ?? ""), [search.q]);
@@ -138,9 +138,9 @@ function Filters({
     return () => clearTimeout(timer);
   });
 
-  const backends = perf.data?.backends.map((b) => b.name) ?? [];
+  const backends = live.data?.backends.map((b) => b.name) ?? [];
   const models = [
-    ...new Set([...me.models, ...(perf.data?.backends.flatMap((b) => b.models) ?? [])]),
+    ...new Set([...me.models, ...(live.data?.backends.flatMap((b) => b.models) ?? [])]),
   ].sort();
   const withCurrent = (list: string[], current?: string) =>
     current && !list.includes(current) ? [current, ...list] : list;

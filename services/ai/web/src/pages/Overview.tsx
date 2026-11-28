@@ -1,9 +1,11 @@
+import { Button } from "@herkules/ui/components/button";
+import { Input } from "@herkules/ui/components/input";
 import { cn } from "@herkules/ui/lib/utils";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 
-import { api, type Stats, type Totals } from "../api.ts";
+import { api, type Stats, type StatsWindow, type Totals } from "../api.ts";
 import { TimeChart } from "../charts.tsx";
 import { count, fixed, ms, percent, shortRoute, stamp } from "../format.ts";
 import { ScopeSwitch } from "../scope.tsx";
@@ -16,12 +18,16 @@ export function OverviewPage() {
   const search = useSearch({ from: "/" });
   const navigate = useNavigate({ from: "/" });
   const range = search.range ?? "24h";
+  const custom = search.from && search.to ? { from: search.from, to: search.to } : undefined;
+  const window: StatsWindow = custom ?? { range };
+  const [editWindow, setEditWindow] = useState(false);
+  const editing = !!custom || editWindow;
   const scope = toScope(search, me);
   const stats = useQuery({
-    queryKey: ["stats", range, scope],
-    queryFn: () => api.stats(range, scope),
+    queryKey: ["stats", window, scope],
+    queryFn: () => api.stats(window, scope),
     placeholderData: keepPreviousData,
-    refetchInterval: range === "1h" ? 15_000 : 60_000,
+    refetchInterval: custom ? false : range === "1h" ? 15_000 : 60_000,
   });
   const people = Object.fromEntries(
     (stats.data?.users ?? []).map((u) => [
@@ -40,21 +46,99 @@ export function OverviewPage() {
         />
         <Segmented
           label="Time range"
-          value={range}
-          options={RANGES.map((r) => ({ value: r, label: r }))}
-          onChange={(r) => void navigate({ search: (s) => ({ ...s, range: r }) })}
+          value={editing ? "custom" : range}
+          options={[
+            ...RANGES.map((r) => ({ value: r, label: r })),
+            { value: "custom", label: "Custom" },
+          ]}
+          onChange={(r) => {
+            setEditWindow(r === "custom");
+            if (r !== "custom") {
+              void navigate({
+                search: (s) => ({ ...s, range: r, from: undefined, to: undefined }),
+              });
+            }
+          }}
         />
       </PageHeader>
+      {editing && (
+        <CustomWindow
+          key={custom ? `${custom.from}/${custom.to}` : "preset"}
+          from={custom?.from ?? stats.data?.from}
+          to={custom?.to ?? stats.data?.to}
+          onApply={(from, to) =>
+            void navigate({ search: (s) => ({ ...s, range: undefined, from, to }) })
+          }
+        />
+      )}
+      <Panel title="Live backends" className="mb-4" action={<Link to="/models">Models</Link>}>
+        <BackendCards />
+      </Panel>
       <ErrorText error={stats.error} />
-      {stats.data ? (
+      {stats.data && !stats.isPlaceholderData ? (
         <Dashboard stats={stats.data} everyone={!!scope.all} />
       ) : (
         !stats.error && <Muted>Loading…</Muted>
       )}
-      <Panel title="Backends" className="mt-4" action={<Link to="/models">Models</Link>}>
-        <BackendCards />
-      </Panel>
     </>
+  );
+}
+
+function localDateTime(date: Date) {
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
+}
+
+function CustomWindow({
+  from,
+  to,
+  onApply,
+}: {
+  from?: string;
+  to?: string;
+  onApply: (from: string, to: string) => void;
+}) {
+  const [error, setError] = useState<string>();
+  const now = Date.now();
+  const date = (value: string | undefined, fallback: number) =>
+    localDateTime(new Date(value && Number.isFinite(Date.parse(value)) ? value : fallback));
+  const apply = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const start = new Date(String(data.get("from")));
+    const end = new Date(String(data.get("to")));
+    if (!(start.getTime() < end.getTime())) {
+      setError("Start time must be before end time.");
+      return;
+    }
+    setError(undefined);
+    onApply(start.toISOString(), end.toISOString());
+  };
+
+  return (
+    <form onSubmit={apply} className="mb-4 rounded-lg border border-line bg-surface px-4 py-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          Start (local time)
+          <Input
+            name="from"
+            type="datetime-local"
+            step={1}
+            defaultValue={date(from, now - 86_400_000)}
+            required
+          />
+        </label>
+        <label className="grid gap-1 text-xs text-muted-foreground">
+          End (local time)
+          <Input name="to" type="datetime-local" step={1} defaultValue={date(to, now)} required />
+        </label>
+        <Button type="submit">Apply</Button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 text-sm text-danger">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -71,13 +155,11 @@ function Dashboard({ stats, everyone }: { stats: Stats; everyone: boolean }) {
     errorRate: p.requests ? (p.errors / p.requests) * 100 : null,
     ttftP50: p.ttftP50,
     ttftP95: p.ttftP95,
-    tpsP50: p.tpsP50,
-    tpsP95: p.tpsP95,
   }));
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <Stat label="Requests" value={count(t.requests)} />
         <Stat
           label="Error rate"
@@ -92,11 +174,6 @@ function Dashboard({ stats, everyone }: { stats: Stats; everyone: boolean }) {
         />
         <Stat label="Output tokens" value={count(t.outputTokens)} />
         <Stat label="TTFT p50" value={ms(t.ttftP50)} sub={`p95 ${ms(t.ttftP95)}`} />
-        <Stat
-          label="Decode p50"
-          value={`${fixed(t.tpsP50)} tok/s`}
-          sub={`p95 ${fixed(t.tpsP95)}`}
-        />
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -105,6 +182,7 @@ function Dashboard({ stats, everyone }: { stats: Stats; everyone: boolean }) {
             kind="bars"
             data={series}
             bucketSeconds={bucketSeconds}
+            window={stats}
             format={count}
             series={[
               { key: "ok", label: "Succeeded", color: "var(--series-1)" },
@@ -115,9 +193,10 @@ function Dashboard({ stats, everyone }: { stats: Stats; everyone: boolean }) {
         </Panel>
         <Panel title="Tokens">
           <TimeChart
-            kind="areas"
+            kind="bars"
             data={series}
             bucketSeconds={bucketSeconds}
+            window={stats}
             format={count}
             series={[
               { key: "prompt", label: "Prompt, uncached", color: "var(--series-1)" },
@@ -131,6 +210,7 @@ function Dashboard({ stats, everyone }: { stats: Stats; everyone: boolean }) {
             kind="lines"
             data={series}
             bucketSeconds={bucketSeconds}
+            window={stats}
             format={ms}
             series={[
               { key: "ttftP50", label: "p50", color: "var(--series-1)" },
@@ -138,19 +218,21 @@ function Dashboard({ stats, everyone }: { stats: Stats; everyone: boolean }) {
             ]}
           />
         </Panel>
-        <Panel title="Decode speed, tok/s">
+        <Panel title="Error rate">
           <TimeChart
             kind="lines"
             data={series}
             bucketSeconds={bucketSeconds}
-            format={(n) => fixed(n, 0)}
+            window={stats}
+            format={(n) => `${fixed(n)}%`}
             series={[
-              { key: "tpsP50", label: "p50", color: "var(--series-2)" },
-              { key: "tpsP95", label: "p95", color: "var(--series-2)", dashed: true },
+              { key: "errorRate", label: "Failed requests", color: "var(--series-critical)" },
             ]}
           />
         </Panel>
       </div>
+
+      <DecodeByLoad rows={stats.decodeByLoad} />
 
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <Panel title="By model" bodyClassName="p-0">
@@ -237,6 +319,68 @@ function Dashboard({ stats, everyone }: { stats: Stats; everyone: boolean }) {
   );
 }
 
+function DecodeByLoad({ rows }: { rows: Stats["decodeByLoad"] }) {
+  const [selection, setSelection] = useState<string>();
+  const groups = new Map<string, { label: string; rows: Stats["decodeByLoad"] }>();
+  for (const row of rows) {
+    const key = JSON.stringify([row.model, row.backend]);
+    const group = groups.get(key);
+    if (group) group.rows.push(row);
+    else groups.set(key, { label: `${row.model} · ${row.backend}`, rows: [row] });
+  }
+  const current = selection && groups.has(selection) ? selection : groups.keys().next().value;
+
+  return (
+    <Panel
+      title="Decode speed by backend load"
+      className="mt-4"
+      action={
+        current && (
+          <select
+            aria-label="Model and backend"
+            className="max-w-[55%] rounded-md border border-line bg-surface px-2 py-1.5 text-sm"
+            value={current}
+            onChange={(event) => setSelection(event.target.value)}
+          >
+            {[...groups].map(([key, group]) => (
+              <option key={key} value={key}>
+                {group.label}
+              </option>
+            ))}
+          </select>
+        )
+      }
+    >
+      <p className="text-xs text-muted-foreground">
+        Load counts gateway requests open on that backend when each request was admitted, including
+        the new request. It estimates concurrency at arrival.
+      </p>
+      {current ? (
+        <table className="mt-2 w-full text-sm">
+          <thead>
+            <tr className="border-b border-line-2 text-left text-xs text-muted-foreground">
+              <Th>Open at admission</Th>
+              <Th right>Samples</Th>
+              <Th right>Decode p50 (tok/s)</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.get(current)?.rows.map((row) => (
+              <tr key={row.admittedInflight} className="border-b border-line-2 last:border-0">
+                <td className="px-2 py-1.5 tabular-nums">{count(row.admittedInflight)}</td>
+                <Td>{count(row.samples)}</Td>
+                <Td>{fixed(row.tpsP50)}</Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <Muted>No successful generations with load and decode measurements in this range.</Muted>
+      )}
+    </Panel>
+  );
+}
+
 function Stat({
   label,
   value,
@@ -283,9 +427,8 @@ function Breakdown({ rows }: { rows: BreakdownRow[] }) {
           <Th right>Failed</Th>
           <Th right>In</Th>
           <Th right>Out</Th>
-          <Th right>TTFT p50</Th>
           <Th right className="pr-4">
-            tok/s p50
+            TTFT p50
           </Th>
         </tr>
       </thead>
@@ -313,8 +456,7 @@ function Breakdown({ rows }: { rows: BreakdownRow[] }) {
             </Td>
             <Td>{count(r.totals.promptTokens)}</Td>
             <Td>{count(r.totals.outputTokens)}</Td>
-            <Td>{ms(r.totals.ttftP50)}</Td>
-            <Td className="pr-4">{fixed(r.totals.tpsP50)}</Td>
+            <Td className="pr-4">{ms(r.totals.ttftP50)}</Td>
           </tr>
         ))}
       </tbody>

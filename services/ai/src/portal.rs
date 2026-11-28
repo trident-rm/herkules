@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use crate::{
     App,
-    backends::{Source, State as BackendState},
+    backends::{BackendPolicy, Routing, Source, State as BackendState},
     cloudflare, config, db, keys, levels,
 };
 
@@ -38,11 +38,16 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/requests/{id}", get(request))
         .route("/requests/{id}/body", get(body))
         .route("/stats", get(stats))
+        .route("/backends/live", get(live_backends))
         .route("/performance", get(performance))
         .route("/admin/backends", post(add_backend))
         .route("/admin/backends/{name}", delete(remove_backend))
+        .route("/admin/routing", get(routing).put(set_routing))
+        .route("/admin/backends/{name}/routing", put(set_backend_policy))
         .route("/admin/backends/{name}/state", put(set_state))
         .route("/admin/logging", get(logging).put(set_logging))
+        .route("/admin/logging/retention", put(set_body_retention))
+        .route("/admin/logging/storage", get(log_storage))
         .layer(middleware::from_fn_with_state(Arc::clone(&app), session));
     let mut router = Router::new()
         .nest("/api", api)
@@ -345,8 +350,18 @@ fn stats_range(name: &str) -> Option<(i64, i64)> {
 #[derive(Deserialize)]
 struct StatsQuery {
     range: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
     sub: Option<String>,
     all: Option<bool>,
+}
+
+fn custom_stats_bucket(length_seconds: i64) -> i64 {
+    let target = (length_seconds + 95) / 96;
+    [60, 300, 900, 1_800, 3_600, 10_800, 21_600, 43_200, 86_400]
+        .into_iter()
+        .find(|bucket| *bucket >= target)
+        .unwrap_or_else(|| ((target + 86_399) / 86_400) * 86_400)
 }
 
 async fn stats(
@@ -354,13 +369,30 @@ async fn stats(
     Extension(p): Extension<Principal>,
     Query(q): Query<StatsQuery>,
 ) -> Response {
-    let range = given(q.range).unwrap_or_else(|| "24h".to_owned());
-    let Some((length, bucket)) = stats_range(&range) else {
-        return problem(StatusCode::BAD_REQUEST, "range is 1h, 24h, 7d or 30d");
+    let (range, from, to, bucket) = if q.from.is_some() || q.to.is_some() {
+        match (instant(q.from.as_deref()), instant(q.to.as_deref())) {
+            (Ok(Some(from)), Ok(Some(to))) if from < to && q.range.is_none() => (
+                "custom".to_owned(),
+                from,
+                to,
+                custom_stats_bucket((to - from).num_seconds()),
+            ),
+            _ => {
+                return problem(
+                    StatusCode::BAD_REQUEST,
+                    "use RFC 3339 from and to with from before to, or use a preset range",
+                );
+            }
+        }
+    } else {
+        let range = given(q.range).unwrap_or_else(|| "24h".to_owned());
+        let Some((length, bucket)) = stats_range(&range) else {
+            return problem(StatusCode::BAD_REQUEST, "range is 1h, 24h, 7d or 30d");
+        };
+        let to = Utc::now();
+        (range, to - TimeDelta::seconds(length), to, bucket)
     };
     let sub = scope(&p, q.all, q.sub);
-    let to = Utc::now();
-    let from = to - TimeDelta::seconds(length);
     let overview = match db::overview(&app.db, sub.as_deref(), from, to, bucket).await {
         Ok(overview) => overview,
         Err(e) => return internal(e),
@@ -402,6 +434,7 @@ async fn stats(
         "series": overview.series,
         "models": overview.models,
         "backends": overview.backends,
+        "decodeByLoad": overview.decode_by_load,
         "keys": overview.keys,
         "users": users,
         "recentErrors": recent_errors,
@@ -455,6 +488,13 @@ fn backend_view(app: &App, admin: bool) -> Vec<Value> {
         .collect()
 }
 
+async fn live_backends(State(app): AppState, Extension(p): Extension<Principal>) -> Json<Value> {
+    Json(json!({
+        "backends": backend_view(&app, is_admin(&p)),
+        "tunnels": app.cloudflare.is_some(),
+    }))
+}
+
 async fn performance(State(app): AppState, Extension(p): Extension<Principal>) -> Response {
     match db::performance(&app.db, 24).await {
         Ok(rows) => Json(json!({
@@ -465,6 +505,54 @@ async fn performance(State(app): AppState, Extension(p): Extension<Principal>) -
         .into_response(),
         Err(e) => internal(e),
     }
+}
+
+async fn routing(State(app): AppState) -> Json<Value> {
+    Json(json!({
+        "settings": app.backends.routing(),
+        "backends": app.backends.policies(),
+    }))
+}
+
+async fn set_routing(
+    State(app): AppState,
+    Extension(p): Extension<Principal>,
+    Json(routing): Json<Routing>,
+) -> Response {
+    if routing.wait_seconds > 60 {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            "wait time must be between 0 and 60 seconds",
+        );
+    }
+    let _admin = app.backend_admin.lock().await;
+    if let Err(e) = db::save_routing(&app.db, routing).await {
+        return internal(e);
+    }
+    app.backends.set_routing(routing);
+    tracing::info!(?routing, by = %p.subject, "backend routing settings updated");
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn set_backend_policy(
+    State(app): AppState,
+    Extension(p): Extension<Principal>,
+    Path(name): Path<String>,
+    Json(policy): Json<BackendPolicy>,
+) -> Response {
+    if policy.max_streams == Some(0) {
+        return problem(StatusCode::BAD_REQUEST, "max streams must be positive");
+    }
+    let _admin = app.backend_admin.lock().await;
+    if app.backends.get(&name).is_none() {
+        return problem(StatusCode::NOT_FOUND, "no such backend");
+    }
+    if let Err(e) = db::save_backend_policy(&app.db, &name, policy).await {
+        return internal(e);
+    }
+    tracing::info!(backend = %name, ?policy, by = %p.subject, "backend routing policy updated");
+    app.backends.set_policy(name, policy);
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[derive(Deserialize)]
@@ -478,6 +566,7 @@ async fn set_state(
     Path(name): Path<String>,
     Json(body): Json<StateBody>,
 ) -> Response {
+    let _admin = app.backend_admin.lock().await;
     if app.backends.get(&name).is_none() {
         return problem(StatusCode::NOT_FOUND, "no such backend");
     }
@@ -501,6 +590,7 @@ async fn add_backend(
     Extension(p): Extension<Principal>,
     Json(body): Json<AddBackend>,
 ) -> Response {
+    let _admin = app.backend_admin.lock().await;
     let Some(cf) = app.cloudflare.as_ref() else {
         return problem(
             StatusCode::CONFLICT,
@@ -569,6 +659,7 @@ async fn remove_backend(
     Extension(p): Extension<Principal>,
     Path(name): Path<String>,
 ) -> Response {
+    let _admin = app.backend_admin.lock().await;
     let Some(entry) = app.backends.get(&name) else {
         return problem(StatusCode::NOT_FOUND, "no such backend");
     };
@@ -586,21 +677,23 @@ async fn remove_backend(
     let Some(cf) = app.cloudflare.as_ref() else {
         return problem(StatusCode::CONFLICT, "AI_CLOUDFLARE_FILE is not configured");
     };
-    let busy = entry.inflight.load(std::sync::atomic::Ordering::Relaxed) as f64
-        + entry.live().running
-        + entry.live().waiting;
-    if busy > 0.0 {
-        if entry.state() != BackendState::Draining {
-            if let Err(e) =
-                db::set_backend_state(&app.db, &name, BackendState::Draining, &p.subject).await
-            {
-                return internal(e);
-            }
-            app.backends.set_state(&name, BackendState::Draining);
+    // Stop new admissions before checking whether it is safe to remove the tunnel.
+    if entry.state() == BackendState::Enabled {
+        if let Err(e) =
+            db::set_backend_state(&app.db, &name, BackendState::Draining, &p.subject).await
+        {
+            return internal(e);
         }
+        app.backends.set_state(&name, BackendState::Draining);
+    }
+    let live = entry.live();
+    let busy = entry.inflight.load(std::sync::atomic::Ordering::Relaxed) as f64
+        + live.running
+        + live.waiting;
+    if busy > 0.0 {
         return problem(
             StatusCode::CONFLICT,
-            "the backend is busy and now draining; remove it again once it is idle",
+            "the backend is busy; remove it again once it is idle",
         );
     }
     if let Err(e) = cf.delete_record(&dns_record_id).await {
@@ -622,15 +715,76 @@ async fn remove_backend(
     if let Err(e) = crate::reload_backends(&app).await {
         return internal(e);
     }
+    app.backends.delete_policy(&name);
     tracing::info!(backend = %name, by = %p.subject, "tunnel backend removed");
     StatusCode::NO_CONTENT.into_response()
 }
 
 async fn logging(State(app): AppState, Extension(p): Extension<Principal>) -> Response {
+    let retention: BTreeMap<_, _> = match db::body_retention(&app.db).await {
+        Ok(rows) => rows.into_iter().collect(),
+        Err(e) => return internal(e),
+    };
     let overrides = app.levels.get();
     let subs: Vec<String> = overrides.users.keys().cloned().collect();
     let users = names(&app, &p, subs).await;
-    Json(json!({"overrides": overrides, "users": users})).into_response()
+    let models: std::collections::BTreeSet<String> = app
+        .backends
+        .all()
+        .iter()
+        .flat_map(|entry| entry.backend.models.iter().cloned())
+        .chain(overrides.models.keys().cloned())
+        .chain(retention.keys().cloned())
+        .collect();
+    Json(json!({
+        "overrides": overrides,
+        "users": users,
+        "models": models,
+        "retention": retention,
+        "defaultRetentionDays": app.config.log_retention_days,
+        "bodyLimitBytes": app.config.log_body_bytes,
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct RetentionBody {
+    model: String,
+    #[serde(flatten)]
+    retention: db::BodyRetention,
+}
+
+async fn set_body_retention(
+    State(app): AppState,
+    Extension(p): Extension<Principal>,
+    Json(body): Json<RetentionBody>,
+) -> Response {
+    let model = body.model.trim();
+    if model.is_empty() {
+        return problem(StatusCode::BAD_REQUEST, "a model id is required");
+    }
+    if let db::BodyRetention::Days { days } = body.retention
+        && !(1..=36_500).contains(&days)
+    {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            "retention must be 1 to 36,500 days",
+        );
+    }
+    if let Err(e) = db::set_body_retention(&app.db, model, body.retention, &p.subject).await {
+        return internal(e);
+    }
+    tracing::info!(model, retention = ?body.retention, by = %p.subject, "body retention policy");
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn log_storage(State(app): AppState) -> Response {
+    let storage = match db::log_storage(&app.db).await {
+        Ok(storage) => storage,
+        Err(e) => return internal(e),
+    };
+    let next_cleanup = *app.next_body_cleanup.read().unwrap();
+    Json(json!({"storage": storage, "nextCleanup": next_cleanup})).into_response()
 }
 
 #[derive(Deserialize)]
