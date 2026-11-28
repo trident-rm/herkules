@@ -2,6 +2,11 @@
 
 export type Level = "metadata" | "full";
 
+export type BodyRetention =
+  | { mode: "default" }
+  | { mode: "days"; days: number }
+  | { mode: "forever" };
+
 export interface Me {
   sub: string;
   role: "admin" | "member";
@@ -58,7 +63,22 @@ export interface Bodies {
   responseTruncated: boolean;
 }
 
+export interface RoutingSettings {
+  strategy: "leastLoaded" | "roundRobin" | "single";
+  waitSeconds: number;
+}
+
+export interface BackendPolicy {
+  priority: number;
+  maxStreams: number | null;
+}
+
 export type BackendState = "enabled" | "disabled" | "draining";
+
+interface MetricInterval {
+  tokens: number;
+  seconds: number;
+}
 
 export interface BackendView {
   name: string;
@@ -69,6 +89,22 @@ export interface BackendView {
     healthy: boolean;
     running: number;
     waiting: number;
+    parked: number | null;
+    kvFreePages: number | null;
+    kvTotalPages: number | null;
+    processStartedAt: number | null;
+    speculativeAcceptance: number | null;
+    fallbackSteps: number | null;
+    prefixCache: Partial<Record<"gpu" | "ram" | "ssd", MetricInterval>>;
+    rejections: Partial<Record<"queue_full" | "draining" | "engine_unavailable", number>>;
+    decodeByStreams: Record<string, MetricInterval>;
+    prefilling: number | null;
+    decoding: number | null;
+    maxStreams: number | null;
+    promptTps: number | null;
+    prefillTps: number | null;
+    decodeTps: number | null;
+    sampledAt: string | null;
     checkedAt: string | null;
     error: string | null;
     tunnel: string | null;
@@ -85,10 +121,13 @@ export interface Median {
   tokensPerRound: number | null;
 }
 
-export interface Performance {
-  medians: Median[];
+export interface LiveBackends {
   backends: BackendView[];
   tunnels: boolean;
+}
+
+export interface Performance extends LiveBackends {
+  medians: Median[];
 }
 
 export interface Person {
@@ -116,6 +155,7 @@ export interface LogFilter extends Scope {
 }
 
 export type Range = "1h" | "24h" | "7d" | "30d";
+export type StatsWindow = { range: Range } | { from: string; to: string };
 
 export interface Totals {
   requests: number;
@@ -131,7 +171,7 @@ export interface Totals {
 }
 
 export interface Stats {
-  range: Range;
+  range: Range | "custom";
   bucketSeconds: number;
   from: string;
   to: string;
@@ -139,6 +179,13 @@ export interface Stats {
   series: (Totals & { t: string })[];
   models: (Totals & { model: string | null })[];
   backends: (Totals & { backend: string | null })[];
+  decodeByLoad: {
+    model: string;
+    backend: string;
+    admittedInflight: number;
+    samples: number;
+    tpsP50: number;
+  }[];
   keys: (Totals & { keyId: number; keyName: string | null })[];
   users: (Totals & { sub: string; displayName: string | null; avatarUrl: string | null })[];
   recentErrors: RequestRow[];
@@ -188,8 +235,15 @@ export const api = {
     ),
   request: (id: number) => call<{ request: RequestRow }>(`/requests/${id}`),
   bodies: (id: number) => call<Bodies>(`/requests/${id}/body`),
-  stats: (range: Range, scope: Scope) => call<Stats>(`/stats?${query({ range, ...scope })}`),
+  stats: (window: StatsWindow, scope: Scope) =>
+    call<Stats>(`/stats?${query({ ...window, ...scope })}`),
+  liveBackends: () => call<LiveBackends>("/backends/live"),
   performance: () => call<Performance>("/performance"),
+  routing: () =>
+    call<{ settings: RoutingSettings; backends: Record<string, BackendPolicy> }>("/admin/routing"),
+  setRouting: (settings: RoutingSettings) => call<void>("/admin/routing", send("PUT", settings)),
+  setBackendPolicy: (name: string, policy: BackendPolicy) =>
+    call<void>(`/admin/backends/${encodeURIComponent(name)}/routing`, send("PUT", policy)),
   setBackendState: (name: string, state: BackendState) =>
     call<void>(`/admin/backends/${encodeURIComponent(name)}/state`, send("PUT", { state })),
   addBackend: (body: { name: string; models: string[]; port: number }) =>
@@ -203,7 +257,23 @@ export const api = {
     call<{
       overrides: { users: Record<string, Level>; models: Record<string, Level> };
       users: Record<string, Person>;
+      models: string[];
+      retention: Record<string, BodyRetention>;
+      defaultRetentionDays: number;
+      bodyLimitBytes: number;
     }>("/admin/logging"),
   setLogging: (scope: "user" | "model", subject: string, level: Level | null) =>
     call<void>("/admin/logging", send("PUT", { scope, subject, level })),
+  setBodyRetention: (model: string, retention: BodyRetention) =>
+    call<void>("/admin/logging/retention", send("PUT", { model, ...retention })),
+  logStorage: () =>
+    call<{
+      storage: {
+        requestRecords: number;
+        bodyRecords: number;
+        requestDiskBytes: number;
+        bodyDiskBytes: number;
+      };
+      nextCleanup: string | null;
+    }>("/admin/logging/storage"),
 };

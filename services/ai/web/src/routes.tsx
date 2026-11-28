@@ -44,6 +44,8 @@ function scopeSearch(s: Record<string, unknown>): ScopeSearch {
 
 export interface OverviewSearch extends ScopeSearch {
   range?: Range;
+  from?: string;
+  to?: string;
 }
 
 export interface LogsSearch extends ScopeSearch {
@@ -69,6 +71,8 @@ const overviewRoute = createRoute({
   validateSearch: (s: Record<string, unknown>): OverviewSearch => ({
     ...scopeSearch(s),
     range: oneOf(s.range, RANGES),
+    from: str(s.from),
+    to: str(s.to),
   }),
   component: OverviewPage,
 });

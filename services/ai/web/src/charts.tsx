@@ -4,8 +4,6 @@
  * row when it shows more than one series, and a crosshair tooltip.
  */
 import {
-  Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -18,6 +16,7 @@ import {
 } from "recharts";
 
 import { tick } from "./format.ts";
+import { Muted } from "./ui.tsx";
 
 export interface Series {
   key: string;
@@ -28,27 +27,47 @@ export interface Series {
 
 type Row = { t: string } & Record<string, unknown>;
 
+const bucketTime = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
 export function TimeChart({
   kind,
   data,
   series,
   bucketSeconds,
+  window,
   format,
   height = 180,
 }: {
-  kind: "bars" | "areas" | "lines";
+  kind: "bars" | "lines";
   data: Row[];
   series: Series[];
   bucketSeconds: number;
+  window: { from: string; to: string };
   format: (n: number) => string;
   height?: number;
 }) {
+  if (!data.some((row) => series.some((s) => typeof row[s.key] === "number"))) {
+    return <Muted>No measurements in this range.</Muted>;
+  }
   const axis = {
     stroke: "var(--muted)",
     fontSize: 11,
     tickLine: false,
     axisLine: false,
   } as const;
+  const bucketLabel = (label: unknown) => {
+    const start = Date.parse(String(label));
+    const from = Math.max(start, Date.parse(window.from));
+    const to = Math.min(start + bucketSeconds * 1000, Date.parse(window.to));
+    return bucketTime.formatRange(from, to);
+  };
   const common = (
     <>
       <CartesianGrid vertical={false} stroke="var(--grid)" />
@@ -58,22 +77,19 @@ export function TimeChart({
         minTickGap={40}
         tickFormatter={(t: string) => tick(t, bucketSeconds)}
       />
-      <YAxis {...axis} width={56} tickFormatter={(n: number) => format(n)} allowDecimals={false} />
+      <YAxis
+        {...axis}
+        width={64}
+        tickFormatter={(n: number) => format(n)}
+        allowDecimals={kind === "lines"}
+      />
       <Tooltip
         cursor={kind === "bars" ? { fill: "var(--surface-2)" } : { stroke: "var(--line)" }}
         isAnimationActive={false}
         content={({ active, payload, label }) =>
           active && payload?.length ? (
             <div className="min-w-40 rounded-md border border-line bg-surface px-3 py-2 text-xs shadow-md">
-              <p className="mb-1 text-muted-foreground">
-                {new Date(String(label)).toLocaleString(undefined, {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: false,
-                })}
-              </p>
+              <p className="mb-1 text-muted-foreground">{bucketLabel(label)}</p>
               {series.map((s) => {
                 const v = payload.find((p) => p.dataKey === s.key)?.value;
                 return (
@@ -122,23 +138,6 @@ export function TimeChart({
               />
             ))}
           </BarChart>
-        ) : kind === "areas" ? (
-          <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-            {common}
-            {series.map((s) => (
-              <Area
-                key={s.key}
-                dataKey={s.key}
-                stackId="a"
-                type="monotone"
-                stroke={s.color}
-                strokeWidth={1.5}
-                fill={s.color}
-                fillOpacity={0.18}
-                isAnimationActive={false}
-              />
-            ))}
-          </AreaChart>
         ) : (
           <LineChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
             {common}
@@ -146,11 +145,11 @@ export function TimeChart({
               <Line
                 key={s.key}
                 dataKey={s.key}
-                type="monotone"
+                type="linear"
                 stroke={s.color}
                 strokeWidth={2}
                 strokeDasharray={s.dashed ? "4 3" : undefined}
-                dot={false}
+                dot={{ r: 2, strokeWidth: 0, fill: s.color }}
                 activeDot={{ r: 4, stroke: "var(--surface)", strokeWidth: 2 }}
                 connectNulls={false}
                 isAnimationActive={false}
